@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -63,6 +64,13 @@ class VkController extends StateNotifier<VkState> {
   }
 
   void space() => _insert(' ');
+
+  /// Tizim buferidan (clipboard) matnni qo'yish — fizik klaviatura/skaner bo'lmasa ham.
+  Future<void> paste() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final t = data?.text;
+    if (t != null && t.isNotEmpty) _insert(t);
+  }
 
   void enter() {
     final cb = state.onEnter;

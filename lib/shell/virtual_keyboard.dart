@@ -32,7 +32,15 @@ class VkOverlay extends ConsumerWidget {
                 children: [
                   _Fn(label: vk.lang.toUpperCase(), onTap: c.cycleLang),
                   const Text('Klaviatura', style: TextStyle(color: Colors.white70, fontSize: 22, fontWeight: FontWeight.w600)),
-                  _Fn(label: '✕', color: T.recRed, onTap: c.hide),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // clipboard'dan qoʻyish (paste) — fizik klaviatura/skaner bo'lmasa ham
+                      _Fn(label: '📋 Qoʻyish', color: T.blue, onTap: () => c.paste()),
+                      const SizedBox(width: 10),
+                      _Fn(label: '✕', color: T.recRed, onTap: c.hide),
+                    ],
+                  ),
                 ],
               ),
               const SizedBox(height: 12),
