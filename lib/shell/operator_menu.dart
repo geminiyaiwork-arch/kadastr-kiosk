@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../core/theme/text_styles.dart';
 import '../core/theme/tokens.dart';
@@ -63,6 +64,11 @@ void showOperatorMenu(BuildContext context) {
             KButton('🔄 Qayta yuklash', variant: 'primary', onTap: () => _confirm(context, 'restart')),
             const SizedBox(height: 12),
             KButton('⏻ O‘chirish', variant: 'navy', onTap: () => _confirm(context, 'shutdown')),
+            const SizedBox(height: 12),
+            KButton('🗗 Oyna rejimi (test)', variant: 'outline', onTap: () async {
+              Navigator.of(context).pop();
+              try { await windowManager.setFullScreen(false); await windowManager.center(); } catch (_) {}
+            }),
             const SizedBox(height: 12),
             KButton('✕ Ilovadan chiqish', variant: 'outline', onTap: () => exit(0)),
             const SizedBox(height: 12),

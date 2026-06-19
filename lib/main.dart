@@ -11,18 +11,22 @@ Future<void> main() async {
   await windowManager.ensureInitialized();
 
   const opts = WindowOptions(
-    size: Size(560, 1000), // dev window; real kiosk = fullscreen (M5)
+    size: Size(560, 1000), // letterbox fallback size if fullscreen is unavailable
     center: true,
     title: 'Davlat Kadastrlari Palatasi — Kiosk',
     backgroundColor: Color(0xFF0C1430),
+    titleBarStyle: TitleBarStyle.hidden,
   );
   unawaited(windowManager.waitUntilReadyToShow(opts, () async {
+    // Kiosk = butun ekranni egallaydi. Avval shu sababli header tepadan
+    // kesilardi (oyna 1000px, laptop ekrani undan past edi). Fullscreen →
+    // header to'liq ko'rinadi + idle/attract butun ekranda. Chiqish: logoni
+    // 10 marta bosib "Ilovadan chiqish" (operator menyu).
+    try {
+      await windowManager.setFullScreen(true);
+    } catch (_) {}
     await windowManager.show();
     await windowManager.focus();
-    // M5 kiosk lockdown:
-    // await windowManager.setFullScreen(true);
-    // await windowManager.setAlwaysOnTop(true);
-    // await windowManager.setPreventClose(true);
   }));
 
   runApp(const ProviderScope(child: KioskApp()));
