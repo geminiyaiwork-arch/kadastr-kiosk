@@ -31,12 +31,25 @@ jobs:
       - name: Build Windows (release)
         run: flutter build windows --release
 
-      - name: Zip release bundle
+      - name: Zip release bundle (portable)
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath kadastr-kiosk-windows.zip
 
-      - name: Upload artifact
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer (Setup.exe)
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\kiosk.iss'
+
+      - name: Upload portable zip
         uses: actions/upload-artifact@v4
         with:
           name: kadastr-kiosk-windows
           path: kadastr-kiosk-windows.zip
+          retention-days: 30
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: kadastr-kiosk-setup
+          path: installer_out/kadastr-kiosk-setup.exe
           retention-days: 30
