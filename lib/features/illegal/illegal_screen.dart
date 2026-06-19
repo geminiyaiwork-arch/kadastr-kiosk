@@ -1,7 +1,10 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/i18n/strings.dart';
 import '../../core/network/models.dart';
@@ -35,9 +38,10 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
   String? _qrUrl;
   String? _qrError;
   bool _qrPolling = false;
-  bool _webMode = false; // MyID Web SDK camera-face step (JSHSHIR/passport)
-  String? _webUrl; // MyID web SDK URL (opens in WebView2)
-  String? _webState; // session_id for polling the result
+  bool _webMode = false; // Windows: embedded WebView2 camera-face step
+  bool _webWaiting = false; // non-Windows: browser opened, polling for result
+  String? _webUrl; // MyID auth URL (WebView2 yoki tizim brauzeri)
+  String? _webState; // state for polling the result
   String? _verifyError; // MyID error (shown to user / for support)
   Map<String, dynamic>? _profile; // MyID verified profile
 
@@ -51,6 +55,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
       _qrError = null;
       _qrPolling = false;
       _webMode = false;
+      _webWaiting = false;
       _webUrl = null;
       _webState = null;
       _verifyError = null;
@@ -93,29 +98,40 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
       });
       return;
     }
-    setState(() {
-      _webUrl = url;
-      _webState = st;
-      _webMode = true;
-      _loading = false;
-    });
+    _webState = st;
+    _webUrl = url;
+    if (Platform.isWindows) {
+      // Windows: ichki WebView2 (kamera) — to'liq ekran oynasi
+      setState(() {
+        _webMode = true;
+        _loading = false;
+      });
+    } else {
+      // Linux/Mac: tizim brauzerида ochiladi (kamera hamma joyda ishlaydi) + polling
+      setState(() {
+        _webWaiting = true;
+        _loading = false;
+      });
+      await _launchBrowser();
+      _pollWeb(L);
+    }
   }
 
-  /// WebView MyID tasdiqdan keyin redirect'ga yetdi → natijani backend'dan polllaymiz.
-  Future<void> _webDone(Map<String, String> L) async {
+  Future<void> _launchBrowser() async {
+    final url = _webUrl;
+    if (url == null) return;
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {/* brauzer topilmasa — foydalanuvchi "Qayta ochish"ni bosadi */}
+  }
+
+  /// WebView/brauzer MyID tasdiqdan so'ng natijani backend'dan polllaydi (state bo'yicha).
+  Future<void> _pollWeb(Map<String, String> L) async {
     final st = _webState;
-    setState(() {
-      _webMode = false;
-      _webUrl = null;
-      _loading = true;
-    });
-    if (st == null) {
-      setState(() => _loading = false);
-      return;
-    }
+    if (st == null) return;
     final repo = ref.read(myidRepoProvider);
     final t0 = DateTime.now();
-    while (mounted && DateTime.now().difference(t0).inSeconds < 30) {
+    while (mounted && (_webWaiting || _loading) && DateTime.now().difference(t0).inSeconds < 180) {
       await Future.delayed(const Duration(seconds: 2));
       if (!mounted) return;
       Map<String, dynamic> r;
@@ -128,6 +144,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
       if (r['error'] != null) {
         setState(() {
           _verifyError = r['error'].toString();
+          _webWaiting = false;
           _loading = false;
         });
         return;
@@ -139,16 +156,26 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
         _records = recs;
         _searched = true;
         _profile = (r['profile'] is Map) ? Map<String, dynamic>.from(r['profile'] as Map) : null;
+        _webWaiting = false;
         _loading = false;
       });
       return;
     }
-    if (mounted) {
+    if (mounted && _webWaiting) {
       setState(() {
-        _verifyError ??= 'MyID: javob kelmadi (vaqt tugadi)';
-        _loading = false;
+        _verifyError ??= 'MyID: javob kelmadi (vaqt tugadi). Qayta urinib ko‘ring.';
+        _webWaiting = false;
       });
     }
+  }
+
+  /// Windows WebView2 redirect'ga yetdi → oynani yopib natijani polllaymiz.
+  void _webDone(Map<String, String> L) {
+    setState(() {
+      _webMode = false;
+      _webWaiting = true;
+    });
+    _pollWeb(L);
   }
 
   Future<void> _startMyId() async {
@@ -344,6 +371,32 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
               _method = null;
               _qrUrl = null;
             })),
+          ],
+        ),
+      );
+    }
+    // non-Windows: brauzerда MyID ochildi → natijani kutyapmiz
+    if (_webWaiting) {
+      return KCard(
+        child: Column(
+          children: [
+            const Text('🪪 MyID', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: T.blue)),
+            const SizedBox(height: 10),
+            const CircularProgressIndicator(color: T.blue),
+            const SizedBox(height: 16),
+            Text(L['verifying'] ?? 'MyID orqali tekshirilmoqda…', textAlign: TextAlign.center, style: K.cardP),
+            const SizedBox(height: 8),
+            Text(L['webBrowserHint'] ?? 'Brauzerда yuzingizni tasdiqlang — natija shu yerда chiqadi.',
+                textAlign: TextAlign.center, style: K.cardP.copyWith(color: T.muted, fontSize: 19)),
+            const SizedBox(height: 14),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              KButton(L['webReopen'] ?? 'Qayta ochish', variant: 'outline', onTap: _launchBrowser),
+              const SizedBox(width: 12),
+              KButton(L['cancel'] ?? 'Bekor', variant: 'outline', onTap: () => setState(() {
+                _webWaiting = false;
+                _method = null;
+              })),
+            ]),
           ],
         ),
       );
