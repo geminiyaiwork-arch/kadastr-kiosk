@@ -6,7 +6,7 @@ AppPublisher=Andijon viloyati kadastr palatasi
 DefaultDirName={autopf}\KadastrKiosk
 DefaultGroupName=Kadastr Kiosk
 DisableProgramGroupPage=yes
-OutputDir=installer_out
+OutputDir=..\installer_out
 OutputBaseFilename=kadastr-kiosk-setup
 Compression=lzma2
 SolidCompression=yes
@@ -23,7 +23,7 @@ Name: "desktopicon"; Description: "Ish stoli yorlig‘i"; GroupDescription: "Qo�
 Name: "autostart"; Description: "Windows bilan avtomatik ishga tushsin (kiosk)"; GroupDescription: "Qo‘shimcha:"; Flags: unchecked
 
 [Files]
-Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\Kadastr Kiosk"; Filename: "{app}\kadastr_kiosk.exe"
