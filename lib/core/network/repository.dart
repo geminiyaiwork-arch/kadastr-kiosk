@@ -89,6 +89,25 @@ class MyIdRepo {
     return Map<String, dynamic>.from(r.data as Map);
   }
 
+  /// Web SDK kamera-yuz: MyID web sessiyasini ochadi. {session_id, state, web_url} yoki {error}.
+  /// JSHSHIR yoki pasport+tug'ilgan kun bilan; web_url WebView2'да ochiladi (kamera).
+  Future<Map<String, dynamic>> webSession({
+    required String mode, // jshshir | passport
+    String? jshshir,
+    String? passport,
+    String? birth,
+    String lang = 'uz',
+  }) async {
+    final r = await ref.read(dioProvider).post('/myid/web-session', data: {
+      'mode': mode,
+      if (jshshir != null) 'jshshir': jshshir,
+      if (passport != null) 'passport': passport,
+      if (birth != null) 'birth': birth,
+      'lang': lang,
+    });
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
   /// Poll the MyID-verified illegal-lands record. {ready, error?, found, name, pinfl, records}
   Future<Map<String, dynamic>> myRecord(String state) async {
     final r = await ref.read(dioProvider).get('/illegal-lands/my-record', queryParameters: {'state': state});

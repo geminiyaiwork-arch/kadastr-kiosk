@@ -31,6 +31,9 @@ dependencies:
   # Camera (Face-ID capture) — Windows kiosk; no Linux impl (graceful fallback)
   camera: ^0.11.0+2
   camera_windows: ^0.2.6
+  # MyID Web SDK — kamera-yuz tasdiqlash WebView2 ichida (Windows-only; Linux'da
+  # graceful fallback). MyID web sahifasi kamerani ochib yuzni tekshiradi.
+  webview_windows: ^0.4.0
   cupertino_icons: ^1.0.6
 
 dev_dependencies:

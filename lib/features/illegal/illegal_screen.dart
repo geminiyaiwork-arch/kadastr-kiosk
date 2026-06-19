@@ -14,8 +14,8 @@ import '../../core/util/fmt.dart';
 import '../../shell/kiosk_shell.dart';
 import '../common/kfield.dart';
 import '../common/widgets.dart';
-import 'face_capture.dart';
 import 'ill_i18n.dart';
+import 'myid_webview.dart';
 
 class IllegalScreen extends ConsumerStatefulWidget {
   const IllegalScreen({super.key});
@@ -35,8 +35,10 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
   String? _qrUrl;
   String? _qrError;
   bool _qrPolling = false;
-  bool _faceMode = false; // camera Face-ID capture step (JSHSHIR/passport)
-  String? _verifyError; // MyID verify-face error (shown to user / for support)
+  bool _webMode = false; // MyID Web SDK camera-face step (JSHSHIR/passport)
+  String? _webUrl; // MyID web SDK URL (opens in WebView2)
+  String? _webState; // session_id for polling the result
+  String? _verifyError; // MyID error (shown to user / for support)
   Map<String, dynamic>? _profile; // MyID verified profile
 
   void _pick(String m) {
@@ -48,41 +50,30 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
       _qrUrl = null;
       _qrError = null;
       _qrPolling = false;
-      _faceMode = false;
+      _webMode = false;
+      _webUrl = null;
+      _webState = null;
       _verifyError = null;
       _profile = null;
     });
     if (m == 'qr') _startMyId();
   }
 
-  Future<void> _runVerify(Map<String, String> L, String photo) async {
+  /// JSHSHIR/Pasport → MyID Web SDK sessiyasi → WebView2'да kamera-yuz tasdiqlash.
+  Future<void> _startWebFace(Map<String, String> L) async {
     setState(() {
-      _faceMode = false;
       _loading = true;
+      _error = null;
       _verifyError = null;
     });
-    final repo = ref.read(illegalRepoProvider);
+    final lang = ref.read(localeProvider);
+    Map<String, dynamic> s;
     try {
-      final r = _method == 'jshshir'
-          ? await repo.verifyFace(mode: 'jshshir', jshshir: _jshshir.text.replaceAll(RegExp(r'\D'), ''), photo: photo)
-          : await repo.verifyFace(mode: 'passport', passport: _pass.text.replaceAll(' ', ''), birth: _birth.text.trim(), photo: photo);
-      if (!mounted) return;
-      if (r['verified'] == true) {
-        final recs = (r['records'] as List? ?? [])
-            .map((e) => IllegalRecord.fromJson(Map<String, dynamic>.from(e as Map)))
-            .toList();
-        setState(() {
-          _profile = (r['profile'] is Map) ? Map<String, dynamic>.from(r['profile'] as Map) : null;
-          _records = recs;
-          _searched = true;
-          _loading = false;
-        });
-      } else {
-        setState(() {
-          _verifyError = (r['error']?.toString()) ?? 'MyID xato';
-          _loading = false;
-        });
-      }
+      s = _method == 'jshshir'
+          ? await ref.read(myidRepoProvider).webSession(
+              mode: 'jshshir', jshshir: _jshshir.text.replaceAll(RegExp(r'\D'), ''), lang: lang)
+          : await ref.read(myidRepoProvider).webSession(
+              mode: 'passport', passport: _pass.text.replaceAll(' ', ''), birth: _birth.text.trim(), lang: lang);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -90,6 +81,73 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
           _loading = false;
         });
       }
+      return;
+    }
+    if (!mounted) return;
+    final url = s['web_url'] as String?;
+    final st = s['state'] as String?;
+    if (url == null || st == null) {
+      setState(() {
+        _verifyError = (s['error']?.toString()) ?? 'MyID xato';
+        _loading = false;
+      });
+      return;
+    }
+    setState(() {
+      _webUrl = url;
+      _webState = st;
+      _webMode = true;
+      _loading = false;
+    });
+  }
+
+  /// WebView MyID tasdiqdan keyin redirect'ga yetdi → natijani backend'dan polllaymiz.
+  Future<void> _webDone(Map<String, String> L) async {
+    final st = _webState;
+    setState(() {
+      _webMode = false;
+      _webUrl = null;
+      _loading = true;
+    });
+    if (st == null) {
+      setState(() => _loading = false);
+      return;
+    }
+    final repo = ref.read(myidRepoProvider);
+    final t0 = DateTime.now();
+    while (mounted && DateTime.now().difference(t0).inSeconds < 30) {
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+      Map<String, dynamic> r;
+      try {
+        r = await repo.myRecord(st);
+      } catch (_) {
+        continue;
+      }
+      if (r['ready'] != true) continue;
+      if (r['error'] != null) {
+        setState(() {
+          _verifyError = r['error'].toString();
+          _loading = false;
+        });
+        return;
+      }
+      final recs = (r['records'] as List? ?? [])
+          .map((e) => IllegalRecord.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      setState(() {
+        _records = recs;
+        _searched = true;
+        _profile = (r['profile'] is Map) ? Map<String, dynamic>.from(r['profile'] as Map) : null;
+        _loading = false;
+      });
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _verifyError ??= 'MyID: javob kelmadi (vaqt tugadi)';
+        _loading = false;
+      });
     }
   }
 
@@ -158,6 +216,20 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
     final t = ref.watch(trProvider);
     final L = illI18n[ref.watch(localeProvider)]!;
     final summary = ref.watch(illegalSummaryProvider);
+
+    // MyID Web SDK kamera-yuz oynasi — to'liq ekran (WebView2)
+    if (_webMode && _webUrl != null) {
+      return MyIdWebView(
+        webUrl: _webUrl!,
+        completeMarker: '/myid/callback',
+        title: _method == 'jshshir' ? L['mJshshir']! : L['mPassport']!,
+        onDone: () => _webDone(L),
+        onCancel: () => setState(() {
+          _webMode = false;
+          _webUrl = null;
+        }),
+      );
+    }
 
     return KioskScaffold(
       body: Column(
@@ -276,14 +348,6 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
         ),
       );
     }
-    // camera Face-ID capture step
-    if (_faceMode) {
-      return FaceCapture(
-        t: L,
-        onCancel: () => setState(() => _faceMode = false),
-        onCaptured: (photo) => _runVerify(L, photo),
-      );
-    }
     return KCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -300,7 +364,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
             Text(_error!, style: const TextStyle(color: T.errText, fontSize: 20)),
           ],
           const SizedBox(height: 14),
-          // submit → opens the camera for Face-ID verification (MyID)
+          // submit → MyID Web SDK ochiladi (kamera-yuz tasdiqlash)
           KButton(_loading ? L['verifying']! : L['submit']!, onTap: () {
             if (_loading) return;
             if (_method == 'jshshir') {
@@ -317,10 +381,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
                 return;
               }
             }
-            setState(() {
-              _error = null;
-              _faceMode = true;
-            });
+            _startWebFace(L);
           }),
         ],
       ),
