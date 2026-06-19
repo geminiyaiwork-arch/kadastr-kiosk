@@ -25,7 +25,7 @@ dependencies:
   # Kiosk window — fullscreen, frameless, always-on-top, prevent close
   window_manager: ^0.4.2
   # Native mic capture (WAV/PCM) + amplitude VAD — Windows/Linux federated
-  record: ^5.1.2
+  record: ^6.0.0
   # Audio playback (TTS MP3 /tts/synthesize, cues) — Windows/Linux support
   audioplayers: ^6.1.0
   # Camera (Face-ID capture) — Windows kiosk; no Linux impl (graceful fallback)
