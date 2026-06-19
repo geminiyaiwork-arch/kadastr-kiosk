@@ -1,10 +1,11 @@
-import 'dart:io' show Platform;
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../core/i18n/strings.dart';
 import '../../core/network/models.dart';
@@ -107,22 +108,64 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
         _loading = false;
       });
     } else {
-      // Linux/Mac: tizim brauzerида ochiladi (kamera hamma joyda ishlaydi) + polling
+      // Linux/Mac: kamera ILOVA ICHIDA (Linux=WebKitGTK helper / Mac=brauzer) + polling
       setState(() {
         _webWaiting = true;
         _loading = false;
       });
-      await _launchBrowser();
-      _pollWeb(L);
+      await _openMyidFace(L);
     }
   }
 
-  Future<void> _launchBrowser() async {
+  /// MyID kamera-yuzni ochadi: Linux → ichki WebKitGTK helper (kamera ILOVA ICHIDA,
+  /// fullscreen); Mac/boshqa → tizim brauzeri. So'ng natijani polllaydi.
+  Future<void> _openMyidFace(Map<String, String> L) async {
     final url = _webUrl;
     if (url == null) return;
+    if (Platform.isLinux) {
+      try {
+        final helper = '${File(Platform.resolvedExecutable).parent.path}/myid-webview';
+        if (File(helper).existsSync()) {
+          try {
+            await windowManager.minimize();
+          } catch (_) {}
+          // helper yopilguncha bloklaydi (yuz tasdiq → redirect → o'zini yopadi)
+          await Process.run(helper, [url, '/myid/callback']);
+          _restoreWindow();
+          await _pollWeb(L);
+          return;
+        }
+      } catch (_) {
+        _restoreWindow();
+      }
+    }
+    // Mac/boshqa yoki helper topilmasa: tizim brauzeri (kamera brauzerда)
+    bool minimized = false;
+    if (!Platform.isWindows) {
+      try {
+        await windowManager.setFullScreen(false);
+        await windowManager.minimize();
+        minimized = true;
+      } catch (_) {}
+    }
     try {
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    } catch (_) {/* brauzer topilmasa — foydalanuvchi "Qayta ochish"ni bosadi */}
+      final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!ok && minimized) _restoreWindow();
+    } catch (_) {
+      if (minimized) _restoreWindow();
+    }
+    await _pollWeb(L);
+  }
+
+  /// Brauzer oqimi tugagach kioskni qaytaramiz (fullscreen + oldinga).
+  void _restoreWindow() {
+    if (Platform.isWindows) return;
+    try {
+      windowManager.restore();
+      windowManager.setFullScreen(true);
+      windowManager.show();
+      windowManager.focus();
+    } catch (_) {}
   }
 
   /// WebView/brauzer MyID tasdiqdan so'ng natijani backend'dan polllaydi (state bo'yicha).
@@ -390,7 +433,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
                 textAlign: TextAlign.center, style: K.cardP.copyWith(color: T.muted, fontSize: 19)),
             const SizedBox(height: 14),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              KButton(L['webReopen'] ?? 'Qayta ochish', variant: 'outline', onTap: _launchBrowser),
+              KButton(L['webReopen'] ?? 'Qayta ochish', variant: 'outline', onTap: () => _openMyidFace(L)),
               const SizedBox(width: 12),
               KButton(L['cancel'] ?? 'Bekor', variant: 'outline', onTap: () => setState(() {
                 _webWaiting = false;
