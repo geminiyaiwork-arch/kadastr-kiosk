@@ -1,0 +1,49 @@
+name: kadastr_kiosk
+description: "Davlat Kadastrlari Palatasi — Info Kiosk (Flutter Windows desktop)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.3 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # HTTP client — base/origin, timeouts, interceptors, raw bytes (STT), binary (TTS)
+  dio: ^5.4.0
+  # State management — conversation state machine, boot data, locale, idle/attract
+  flutter_riverpod: ^2.5.1
+  # Navigation — maps web nav(page) incl. district:<name> + AI takeover
+  go_router: ^14.2.0
+  # Locale + number/date formatting (ru-RU thin-space grouping, HH:mm, dd.MM.yyyy)
+  intl: ^0.19.0
+  # Inline SVG icons (nav + service icons recreated from app.js ICONS)
+  flutter_svg: ^2.0.10
+  # QR codes (social links, MyID auth_url) — replaces qrcode.min.js
+  qr_flutter: ^4.1.0
+  # Kiosk window — fullscreen, frameless, always-on-top, prevent close
+  window_manager: ^0.4.2
+  # Native mic capture (WAV/PCM) + amplitude VAD — Windows/Linux federated
+  record: ^5.1.2
+  # Audio playback (TTS MP3 /tts/synthesize, cues) — Windows/Linux support
+  audioplayers: ^6.1.0
+  # Camera (Face-ID capture) — Windows kiosk; no Linux impl (graceful fallback)
+  camera: ^0.11.0+2
+  camera_windows: ^0.2.6
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/content/
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Variable.ttf
