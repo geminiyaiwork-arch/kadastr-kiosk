@@ -28,13 +28,10 @@ dependencies:
   record: ^6.0.0
   # Audio playback (TTS MP3 /tts/synthesize, cues) — Windows/Linux support
   audioplayers: ^6.1.0
-  # Camera (Face-ID capture) — Windows kiosk; no Linux impl (graceful fallback)
+  # Camera (in-page Face-ID capture) — Windows kiosk (camera_windows); Linux'da
+  # plagin yo'q → graceful fallback. Rasm → MyID embedded API → yuz tasdiqlash.
   camera: ^0.11.0+2
   camera_windows: ^0.2.6
-  # MyID kamera-yuz: Windows'da ichki WebView2; boshqa platformalarda (Linux/Mac)
-  # tizim brauzerida ochiladi (url_launcher) — kamera hamma joyda ishlaydi.
-  webview_windows: ^0.4.0
-  url_launcher: ^6.2.5
   cupertino_icons: ^1.0.6
 
 dev_dependencies:

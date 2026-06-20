@@ -1,11 +1,7 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../../core/i18n/strings.dart';
 import '../../core/network/models.dart';
@@ -18,8 +14,8 @@ import '../../core/util/fmt.dart';
 import '../../shell/kiosk_shell.dart';
 import '../common/kfield.dart';
 import '../common/widgets.dart';
+import 'face_capture.dart';
 import 'ill_i18n.dart';
-import 'myid_webview.dart';
 
 class IllegalScreen extends ConsumerStatefulWidget {
   const IllegalScreen({super.key});
@@ -39,10 +35,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
   String? _qrUrl;
   String? _qrError;
   bool _qrPolling = false;
-  bool _webMode = false; // Windows: embedded WebView2 camera-face step
-  bool _webWaiting = false; // non-Windows: browser opened, polling for result
-  String? _webUrl; // MyID auth URL (WebView2 yoki tizim brauzeri)
-  String? _webState; // state for polling the result
+  bool _faceMode = false; // JSHSHIR/Pasport: in-page native camera (Face-ID) step
   String? _verifyError; // MyID error (shown to user / for support)
   Map<String, dynamic>? _profile; // MyID verified profile
 
@@ -55,31 +48,43 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
       _qrUrl = null;
       _qrError = null;
       _qrPolling = false;
-      _webMode = false;
-      _webWaiting = false;
-      _webUrl = null;
-      _webState = null;
+      _faceMode = false;
       _verifyError = null;
       _profile = null;
     });
     if (m == 'qr') _startMyId();
   }
 
-  /// JSHSHIR/Pasport → MyID Web SDK sessiyasi → WebView2'да kamera-yuz tasdiqlash.
-  Future<void> _startWebFace(Map<String, String> L) async {
+  /// In-page kameradan olingan yuz fotosi → MyID embedded (yuzni davlat bazasi
+  /// bilan solishtiradi) → moslik bo'lsa to'liq profil + noqonuniy holat.
+  Future<void> _runVerify(Map<String, String> L, String photo) async {
     setState(() {
+      _faceMode = false;
       _loading = true;
-      _error = null;
       _verifyError = null;
     });
-    final lang = ref.read(localeProvider);
-    Map<String, dynamic> s;
+    final repo = ref.read(illegalRepoProvider);
     try {
-      s = _method == 'jshshir'
-          ? await ref.read(myidRepoProvider).webSession(
-              mode: 'jshshir', jshshir: _jshshir.text.replaceAll(RegExp(r'\D'), ''), lang: lang)
-          : await ref.read(myidRepoProvider).webSession(
-              mode: 'passport', passport: _pass.text.replaceAll(' ', ''), birth: _birth.text.trim(), lang: lang);
+      final r = _method == 'jshshir'
+          ? await repo.verifyFace(mode: 'jshshir', jshshir: _jshshir.text.replaceAll(RegExp(r'\D'), ''), photo: photo)
+          : await repo.verifyFace(mode: 'passport', passport: _pass.text.replaceAll(' ', ''), birth: _birth.text.trim(), photo: photo);
+      if (!mounted) return;
+      if (r['verified'] == true) {
+        final recs = (r['records'] as List? ?? [])
+            .map((e) => IllegalRecord.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList();
+        setState(() {
+          _profile = (r['profile'] is Map) ? Map<String, dynamic>.from(r['profile'] as Map) : null;
+          _records = recs;
+          _searched = true;
+          _loading = false;
+        });
+      } else {
+        setState(() {
+          _verifyError = (r['error']?.toString()) ?? 'MyID xato';
+          _loading = false;
+        });
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -87,138 +92,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
           _loading = false;
         });
       }
-      return;
     }
-    if (!mounted) return;
-    final url = s['web_url'] as String?;
-    final st = s['state'] as String?;
-    if (url == null || st == null) {
-      setState(() {
-        _verifyError = (s['error']?.toString()) ?? 'MyID xato';
-        _loading = false;
-      });
-      return;
-    }
-    _webState = st;
-    _webUrl = url;
-    if (Platform.isWindows) {
-      // Windows: ichki WebView2 (kamera) — to'liq ekran oynasi
-      setState(() {
-        _webMode = true;
-        _loading = false;
-      });
-    } else {
-      // Linux/Mac: kamera ILOVA ICHIDA (Linux=WebKitGTK helper / Mac=brauzer) + polling
-      setState(() {
-        _webWaiting = true;
-        _loading = false;
-      });
-      await _openMyidFace(L);
-    }
-  }
-
-  /// MyID kamera-yuzni ochadi: Linux → ichki WebKitGTK helper (kamera ILOVA ICHIDA,
-  /// fullscreen); Mac/boshqa → tizim brauzeri. So'ng natijani polllaydi.
-  Future<void> _openMyidFace(Map<String, String> L) async {
-    final url = _webUrl;
-    if (url == null) return;
-    if (Platform.isLinux) {
-      try {
-        final helper = '${File(Platform.resolvedExecutable).parent.path}/myid-webview';
-        if (File(helper).existsSync()) {
-          try {
-            await windowManager.minimize();
-          } catch (_) {}
-          // helper yopilguncha bloklaydi (yuz tasdiq → redirect → o'zini yopadi)
-          await Process.run(helper, [url, '/myid/callback']);
-          _restoreWindow();
-          await _pollWeb(L);
-          return;
-        }
-      } catch (_) {
-        _restoreWindow();
-      }
-    }
-    // Mac/boshqa yoki helper topilmasa: tizim brauzeri (kamera brauzerда)
-    bool minimized = false;
-    if (!Platform.isWindows) {
-      try {
-        await windowManager.setFullScreen(false);
-        await windowManager.minimize();
-        minimized = true;
-      } catch (_) {}
-    }
-    try {
-      final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-      if (!ok && minimized) _restoreWindow();
-    } catch (_) {
-      if (minimized) _restoreWindow();
-    }
-    await _pollWeb(L);
-  }
-
-  /// Brauzer oqimi tugagach kioskni qaytaramiz (fullscreen + oldinga).
-  void _restoreWindow() {
-    if (Platform.isWindows) return;
-    try {
-      windowManager.restore();
-      windowManager.setFullScreen(true);
-      windowManager.show();
-      windowManager.focus();
-    } catch (_) {}
-  }
-
-  /// WebView/brauzer MyID tasdiqdan so'ng natijani backend'dan polllaydi (state bo'yicha).
-  Future<void> _pollWeb(Map<String, String> L) async {
-    final st = _webState;
-    if (st == null) return;
-    final repo = ref.read(myidRepoProvider);
-    final t0 = DateTime.now();
-    while (mounted && (_webWaiting || _loading) && DateTime.now().difference(t0).inSeconds < 180) {
-      await Future.delayed(const Duration(seconds: 2));
-      if (!mounted) return;
-      Map<String, dynamic> r;
-      try {
-        r = await repo.myRecord(st);
-      } catch (_) {
-        continue;
-      }
-      if (r['ready'] != true) continue;
-      if (r['error'] != null) {
-        setState(() {
-          _verifyError = r['error'].toString();
-          _webWaiting = false;
-          _loading = false;
-        });
-        return;
-      }
-      final recs = (r['records'] as List? ?? [])
-          .map((e) => IllegalRecord.fromJson(Map<String, dynamic>.from(e as Map)))
-          .toList();
-      setState(() {
-        _records = recs;
-        _searched = true;
-        _profile = (r['profile'] is Map) ? Map<String, dynamic>.from(r['profile'] as Map) : null;
-        _webWaiting = false;
-        _loading = false;
-      });
-      return;
-    }
-    if (mounted && _webWaiting) {
-      setState(() {
-        _verifyError ??= 'MyID: javob kelmadi (vaqt tugadi). Qayta urinib ko‘ring.';
-        _webWaiting = false;
-      });
-    }
-  }
-
-  /// Windows WebView2 redirect'ga yetdi → oynani yopib natijani polllaymiz.
-  void _webDone(Map<String, String> L) {
-    setState(() {
-      _webMode = false;
-      _webWaiting = true;
-    });
-    _pollWeb(L);
   }
 
   Future<void> _startMyId() async {
@@ -286,20 +160,6 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
     final t = ref.watch(trProvider);
     final L = illI18n[ref.watch(localeProvider)]!;
     final summary = ref.watch(illegalSummaryProvider);
-
-    // MyID Web SDK kamera-yuz oynasi — to'liq ekran (WebView2)
-    if (_webMode && _webUrl != null) {
-      return MyIdWebView(
-        webUrl: _webUrl!,
-        completeMarker: '/myid/callback',
-        title: _method == 'jshshir' ? L['mJshshir']! : L['mPassport']!,
-        onDone: () => _webDone(L),
-        onCancel: () => setState(() {
-          _webMode = false;
-          _webUrl = null;
-        }),
-      );
-    }
 
     return KioskScaffold(
       body: Column(
@@ -418,30 +278,12 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
         ),
       );
     }
-    // non-Windows: brauzerда MyID ochildi → natijani kutyapmiz
-    if (_webWaiting) {
-      return KCard(
-        child: Column(
-          children: [
-            const Text('🪪 MyID', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: T.blue)),
-            const SizedBox(height: 10),
-            const CircularProgressIndicator(color: T.blue),
-            const SizedBox(height: 16),
-            Text(L['verifying'] ?? 'MyID orqali tekshirilmoqda…', textAlign: TextAlign.center, style: K.cardP),
-            const SizedBox(height: 8),
-            Text(L['webBrowserHint'] ?? 'Brauzerда yuzingizni tasdiqlang — natija shu yerда chiqadi.',
-                textAlign: TextAlign.center, style: K.cardP.copyWith(color: T.muted, fontSize: 19)),
-            const SizedBox(height: 14),
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              KButton(L['webReopen'] ?? 'Qayta ochish', variant: 'outline', onTap: () => _openMyidFace(L)),
-              const SizedBox(width: 12),
-              KButton(L['cancel'] ?? 'Bekor', variant: 'outline', onTap: () => setState(() {
-                _webWaiting = false;
-                _method = null;
-              })),
-            ]),
-          ],
-        ),
+    // JSHSHIR/Pasport: in-page native kamera (yuzni o'sha sahifada oladi)
+    if (_faceMode) {
+      return FaceCapture(
+        t: L,
+        onCancel: () => setState(() => _faceMode = false),
+        onCaptured: (photo) => _runVerify(L, photo),
       );
     }
     return KCard(
@@ -460,7 +302,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
             Text(_error!, style: const TextStyle(color: T.errText, fontSize: 20)),
           ],
           const SizedBox(height: 14),
-          // submit → MyID Web SDK ochiladi (kamera-yuz tasdiqlash)
+          // submit → o'sha sahifada kamera ochiladi (in-page Face-ID → MyID embedded)
           KButton(_loading ? L['verifying']! : L['submit']!, onTap: () {
             if (_loading) return;
             if (_method == 'jshshir') {
@@ -477,7 +319,10 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
                 return;
               }
             }
-            _startWebFace(L);
+            setState(() {
+              _error = null;
+              _faceMode = true;
+            });
           }),
         ],
       ),
