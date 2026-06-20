@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -7,8 +8,10 @@ import '../../core/theme/text_styles.dart';
 import '../../core/theme/tokens.dart';
 import '../common/widgets.dart';
 
-/// Face capture for kiosk Face-ID (Windows). On Linux/no-camera it shows a
-/// fallback so the verify flow (and any MyID error) can still be exercised.
+/// Face capture for kiosk Face-ID.
+/// - Windows/macOS: native `camera` package (inline preview on the page).
+/// - Linux: bundled `myid-camera` WebKitGTK helper (Flutter'нинг camera paketi
+///   Linux desktop'ни qo'llamaydi; WebKit getUserMedia orqali rasm oladi).
 class FaceCapture extends StatefulWidget {
   const FaceCapture({super.key, required this.t, required this.onCaptured, required this.onCancel});
   final Map<String, String> t;
@@ -22,11 +25,51 @@ class _FaceCaptureState extends State<FaceCapture> {
   CameraController? _cam;
   bool _noCamera = false;
   bool _busy = false;
+  bool _linuxRunning = false; // Linux helper oynasi ochiq
 
   @override
   void initState() {
     super.initState();
-    _init();
+    if (Platform.isLinux) {
+      _linuxCapture();
+    } else {
+      _init();
+    }
+  }
+
+  /// Linux: bundled WebKitGTK helper'ни ishga tushiradi (fullscreen kamera) →
+  /// rasm faylга yoziladi → o'qib onCaptured ga uzatamiz.
+  Future<void> _linuxCapture() async {
+    final helper = '${File(Platform.resolvedExecutable).parent.path}/myid-camera';
+    if (!File(helper).existsSync()) {
+      if (mounted) setState(() => _noCamera = true);
+      return;
+    }
+    final out = '${Directory.systemTemp.path}/myid_face_${DateTime.now().millisecondsSinceEpoch}.txt';
+    if (mounted) setState(() => _linuxRunning = true);
+    try {
+      await Process.run(helper, [out]); // helper yopilguncha bloklaydi
+      final f = File(out);
+      String? photo;
+      if (f.existsSync()) {
+        final s = (await f.readAsString()).trim();
+        if (s.startsWith('data:image')) photo = s;
+        try { f.deleteSync(); } catch (_) {}
+      }
+      if (!mounted) return;
+      if (photo != null) {
+        widget.onCaptured(photo);
+      } else {
+        widget.onCancel(); // bekor qilindi yoki rasm olinmadi
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _linuxRunning = false;
+          _noCamera = true;
+        });
+      }
+    }
   }
 
   Future<void> _init() async {
@@ -76,6 +119,23 @@ class _FaceCaptureState extends State<FaceCapture> {
   Widget build(BuildContext context) {
     final t = widget.t;
     final ready = _cam?.value.isInitialized ?? false;
+    // Linux: helper fullscreen oynaси ochiq — bu yerда faqat holat ko'rsatamiz
+    if (_linuxRunning) {
+      return KCard(
+        child: Column(
+          children: [
+            Text(t['faceTitle']!, textAlign: TextAlign.center, style: K.cardH),
+            const SizedBox(height: 18),
+            const CircularProgressIndicator(color: T.blue),
+            const SizedBox(height: 18),
+            Text(t['faceWindowOpen'] ?? 'Kamera oynasi ochildi — yuzingizni suratga oling.',
+                textAlign: TextAlign.center, style: K.cardP),
+            const SizedBox(height: 14),
+            KButton(t['cancel']!, variant: 'outline', onTap: widget.onCancel),
+          ],
+        ),
+      );
+    }
     return KCard(
       child: Column(
         children: [
