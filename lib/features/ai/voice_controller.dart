@@ -138,54 +138,51 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
   }
 
+  // Ambient wake-word tinglash: getAmplitude'ga TAYANMAYDI (Linux'da -160 qaytaradi).
+  // Qisqa oyna (≈3.6s) yozib, FAYL energiyasi (RMS) bo'yicha sukut/ovozни ajratadi —
+  // sukut bo'lsa STTга yubormaydi, ovoz bo'lsa STT → wake-word ("Kai") tekshiradi.
+  static const int _winMs = 3600;
+  static const double _rmsMinDbfs = -52.0; // shundan baland = gapirilgan
   Future<String?> _capture() async {
     final path = '${Directory.systemTemp.path}/kadastr_utt.wav';
     try {
       await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: path);
     } catch (_) {
-      await _sleep(500);
+      await _sleep(600);
       return null;
     }
     var waited = 0;
-    while (_on && !_busy) {
-      final db = await _amp();
-      if (db > Env.onsetDb) break;
-      await _sleep(Env.onsetPollMs);
-      waited += Env.onsetPollMs;
-      if (waited > Env.onsetTimeoutMs) {
-        await _stopRec();
-        return null;
-      }
-    }
-    if (!_on) {
-      await _stopRec();
-      return null;
-    }
-    var silence = 0, voiced = 0;
-    final start = DateTime.now();
-    while (_on) {
-      await _sleep(Env.endPollMs);
-      final db = await _amp();
-      if (db < Env.stopDb) {
-        silence += Env.endPollMs;
-      } else {
-        silence = 0;
-        if (db > Env.onsetDb) voiced += Env.endPollMs;
-      }
-      if (silence > Env.endSilenceMs) break;
-      if (DateTime.now().difference(start).inMilliseconds > Env.utteranceMaxMs) break;
+    while (_on && !_busy && waited < _winMs) {
+      await _sleep(150);
+      waited += 150;
     }
     await _stopRec();
-    if (voiced < Env.minVoicedMs) return null;
+    if (!_on || _busy) return null;
+    try {
+      final bytes = await File(path).readAsBytes();
+      if (bytes.length < 4000) return null; // juda qisqa
+      if (_rmsDbfs(bytes) < _rmsMinDbfs) return null; // sukut → STTга yubormaymiz
+    } catch (_) {
+      return null;
+    }
     return path;
   }
 
-  Future<double> _amp() async {
-    try {
-      return (await _rec.getAmplitude()).current;
-    } catch (_) {
-      return -160;
+  /// WAV (16-bit PCM mono) baytlaridan RMS energiya (dBFS) — platformaga bog'liq emas.
+  double _rmsDbfs(List<int> wav) {
+    final n = wav.length;
+    if (n <= 44) return -160;
+    var sum = 0.0;
+    var cnt = 0;
+    for (var i = 44; i + 1 < n; i += 2) {
+      var s = wav[i] | (wav[i + 1] << 8);
+      if (s >= 32768) s -= 65536;
+      sum += s.toDouble() * s.toDouble();
+      cnt++;
     }
+    if (cnt == 0) return -160;
+    final rms = sqrt(sum / cnt);
+    return 20 * (log(rms / 32768.0 + 1e-9) / ln10);
   }
 
   Future<void> _stopRec() async {
