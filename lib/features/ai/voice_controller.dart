@@ -19,6 +19,7 @@ class VoiceUiState {
   final String answer;
   final List<List<dynamic>>? table;
   final bool speaking;
+  final bool recording; // tap-to-talk: qo'lda yozilyapti
   final String? error;
   const VoiceUiState({
     this.phase = VoicePhase.off,
@@ -26,16 +27,18 @@ class VoiceUiState {
     this.answer = '',
     this.table,
     this.speaking = false,
+    this.recording = false,
     this.error,
   });
 
-  VoiceUiState copyWith({VoicePhase? phase, String? heard, String? answer, List<List<dynamic>>? table, bool? speaking, String? error, bool clearError = false}) =>
+  VoiceUiState copyWith({VoicePhase? phase, String? heard, String? answer, List<List<dynamic>>? table, bool? speaking, bool? recording, String? error, bool clearError = false}) =>
       VoiceUiState(
         phase: phase ?? this.phase,
         heard: heard ?? this.heard,
         answer: answer ?? this.answer,
         table: table ?? this.table,
         speaking: speaking ?? this.speaking,
+        recording: recording ?? this.recording,
         error: clearError ? null : (error ?? this.error),
       );
 }
@@ -259,6 +262,58 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       await askAI(cmd);
     } else {
       await _speak(_prompt());
+    }
+  }
+
+  // ===== TAP-TO-TALK (qo'lda gapirish) — VAD/amplitude'siz, hamma platformada =====
+  bool _manual = false;
+  String? _manualPath;
+
+  /// Tugmani bosib gapirish: 1-bosish boshlaydi (yozadi), 2-bosish to'xtatib AIга
+  /// yuboradi. Linux'da getAmplitude ishlamaydi → VAD o'rniga shu ishlatiladi.
+  Future<void> toggleTalk() async {
+    if (_manual) {
+      await _finishTalk();
+      return;
+    }
+    _busy = true; // ambient loop'ni pauza qiladi (mikrofon to'qnashmasin)
+    try { await _player.stop(); } catch (_) {}
+    try {
+      if (!await _rec.hasPermission()) {
+        state = state.copyWith(error: 'mic', recording: false);
+        _busy = false;
+        return;
+      }
+      if (await _rec.isRecording()) await _rec.stop();
+      final path = '${Directory.systemTemp.path}/kadastr_talk.wav';
+      await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: path);
+      _manualPath = path;
+      _manual = true;
+      state = state.copyWith(phase: VoicePhase.listening, heard: '', recording: true, clearError: true);
+      Future.delayed(const Duration(seconds: 20), () { if (_manual) _finishTalk(); }); // xavfsizlik cheki
+    } catch (_) {
+      _manual = false;
+      _busy = false;
+      state = state.copyWith(error: 'mic', recording: false);
+    }
+  }
+
+  Future<void> _finishTalk() async {
+    if (!_manual) return;
+    _manual = false;
+    state = state.copyWith(recording: false, phase: VoicePhase.transcribing);
+    await _stopRec();
+    final path = _manualPath;
+    _manualPath = null;
+    final text = (path != null) ? await _stt(path) : null;
+    if (text != null && text.trim().isNotEmpty) {
+      state = state.copyWith(heard: text.trim());
+      _logHeard(text.trim());
+      await askAI(text.trim());
+    } else {
+      final msg = {'uz': 'Eshitmadim, qaytadan urinib ko‘ring.', 'ru': 'Не расслышал, попробуйте снова.', 'en': 'I didn’t catch that, please try again.'}[_lang]!;
+      state = state.copyWith(answer: msg);
+      await _speak(msg);
     }
   }
 

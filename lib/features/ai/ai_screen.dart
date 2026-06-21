@@ -27,7 +27,15 @@ class _AiScreenState extends ConsumerState<AiScreen> {
   }
 
   String _status(VoiceUiState v, Map<String, dynamic> t) {
+    final lang = ref.read(localeProvider);
     if (v.error == 'mic') return '🎤 ${t['aiMic']}';
+    if (v.recording) {
+      return {
+        'uz': '🔴 Gapiring… (to‘xtatish uchun bosing)',
+        'ru': '🔴 Говорите… (нажмите, чтобы остановить)',
+        'en': '🔴 Speak… (tap to stop)',
+      }[lang]!;
+    }
     switch (v.phase) {
       case VoicePhase.thinking:
         return '⏳ ${t['aiThink']}';
@@ -88,6 +96,35 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                   boxShadow: const [BoxShadow(color: Color(0x38000000), offset: Offset(0, 6), blurRadius: 20)],
                 ),
                 child: const Text('‹', style: TextStyle(fontSize: 46, fontWeight: FontWeight.w800, color: T.navy)),
+              ),
+            ),
+          ),
+          // TAP-TO-TALK mikrofon tugmasi — VAD'siz, hamma platformada (Linux ham) ishlaydi
+          Positioned(
+            bottom: 170,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: GestureDetector(
+                onTap: () => ref.read(voiceProvider.notifier).toggleTalk(),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: v.recording ? 172 : 150,
+                  height: v.recording ? 172 : 150,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: v.recording ? const Color(0xFFE5484D) : T.blue,
+                    boxShadow: [
+                      BoxShadow(
+                        color: v.recording ? const Color(0x66E5484D) : const Color(0x662F6FE3),
+                        blurRadius: 42,
+                        spreadRadius: v.recording ? 14 : 4,
+                      ),
+                    ],
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(v.recording ? Icons.stop_rounded : Icons.mic_rounded, color: Colors.white, size: 78),
+                ),
               ),
             ),
           ),
