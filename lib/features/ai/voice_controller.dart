@@ -45,9 +45,14 @@ class VoiceUiState {
 
 /// Wake-word variants for "KAI" (= Kadastr AI), incl. Whisper mis-hearings.
 const _wakeSet = {
-  'kai', 'kayi', 'kay', 'kei', 'key', 'kaye', 'qay', 'qai', 'qei', 'kayy', 'kae',
-  'кай', 'кей', 'кайи', 'кад', 'kadastr', 'cadastre',
+  'kai', 'kayi', 'kay', 'kei', 'key', 'kaye', 'qay', 'qai', 'qei', 'qey', 'qiy', 'qyi',
+  'kayy', 'kae', 'kya', 'kyi', 'gay', 'gey', 'gai', 'kayu', 'qayu', 'kaa', 'qaa',
+  'кай', 'кей', 'кэй', 'кайи', 'кад', 'гай', 'гей', 'kadastr', 'cadastre',
 };
+
+/// Fuzzy wake match — Whisper "Kai"ни turlicha yozadi (qey/kay/gey…): k/q/g + unli(+y/i).
+final _wakeRe = RegExp(r'^[kqg][aeiouyаеёиоуэыюяй]{1,2}[yiй]?$');
+bool _wakeFuzzy(String w) => w.length >= 2 && w.length <= 4 && _wakeRe.hasMatch(w);
 
 /// Single always-on voice engine: mic → VAD → /stt → wake-route → /ai/chat → TTS.
 /// Runs globally; on the AI page the wake word is optional.
@@ -227,7 +232,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     var wi = -1;
     for (var i = 0; i < min(3, words.length); i++) {
       final w = words[i];
-      if (_wakeSet.contains(w) || w.startsWith('kadastr') || w.startsWith('cadastre')) {
+      if (_wakeSet.contains(w) || w.startsWith('kadastr') || w.startsWith('cadastre') || _wakeFuzzy(w)) {
         wi = i;
         break;
       }
