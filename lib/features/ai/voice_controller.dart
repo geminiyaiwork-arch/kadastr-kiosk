@@ -69,6 +69,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   bool Function()? onAiPage; // direct mode (no wake needed)
   bool Function()? canListen; // false on the appeal page (camera owns the mic)
   void Function()? navToAi;
+  void Function(String route)? navTo; // ovozli sahifa-navigatsiya (oldindan tayyor sahifalar)
 
   Dio get _dio => ref.read(dioProvider);
   Future<void> _sleep(int ms) => Future.delayed(Duration(milliseconds: ms));
@@ -79,10 +80,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     required bool Function() onAiPage,
     required bool Function() canListen,
     required void Function() navToAi,
+    void Function(String route)? navTo,
   }) async {
     this.onAiPage = onAiPage;
     this.canListen = canListen;
     this.navToAi = navToAi;
+    this.navTo = navTo;
     _lang = lang;
     if (_on) return;
     try {
@@ -245,26 +248,72 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     state = state.copyWith(heard: text);
     _logHeard(text);
     final onAi = onAiPage?.call() ?? false;
-    if (onAi) {
-      if (text.trim().length >= 6) {
-        await askAI(text);
-      } else {
-        _busy = false;
+    // Bosh sahifalarда "Kai" wake-word kerak; AI sahifaсида to'g'ridan-to'g'ri.
+    String content = text;
+    if (!onAi) {
+      final cmd = _stripWake(text);
+      if (cmd == null) {
+        _busy = false; // wake-word yo'q — e'tibor bermaymiz
+        return;
       }
+      content = cmd;
+    }
+    // 1) OVOZLI SAHIFA-NAVIGATSIYA — oldindan tayyor sahifaга o'tadi (jadval shu yerда,
+    //    STT aniqligига bog'liq emas). Masalan "noqonuniy yerlar" → /illegal.
+    final route = _matchRoute(content);
+    if (route != null && navTo != null) {
+      navTo!(route);
+      await _speak(_navConfirm(route));
       return;
     }
-    final cmd = _stripWake(text);
-    if (cmd == null) {
-      _busy = false; // no wake word — ignore
-      return;
+    // 2) Aks holda — AI savol (LLM)
+    if (!onAi) {
+      navToAi?.call();
+      await _sleep(300);
     }
-    navToAi?.call();
-    await _sleep(300);
-    if (cmd.length >= 2) {
-      await askAI(cmd);
+    if (content.trim().length >= 2) {
+      await askAI(content);
     } else {
       await _speak(_prompt());
     }
+  }
+
+  /// Ovozli buyruq → sahifa yo'li (fuzzy, Whisper imlosiга chidamli). null = AI savol.
+  String? _matchRoute(String text) {
+    final t = text.toLowerCase().replaceAll(RegExp(r"['’ʻ`]"), '');
+    bool has(List<String> keys) => keys.any((k) => t.contains(k));
+    // noqonuniy egallangan yerlar — aniq so'z + fuzzy undosh-skeleton (nakanuni/egellengen…)
+    if (has(['noqonun', 'qonunsiz', 'egallangan', 'egalangan', 'незаконн', 'illegal']) ||
+        RegExp(r'g[aeiou]*l+[aeiou]*n[aeiou]*g[aeiou]*n').hasMatch(t) ||
+        RegExp(r'n[aeiou]*[qkg][aeiou]*n[aeiou]*n').hasMatch(t)) {
+      return '/illegal';
+    }
+    if (has(['hujjat', 'document', 'документ', 'spravka'])) return '/docs';
+    if (has(['telefon', 'phone', 'телефон', 'raqam', 'aloqa'])) return '/phones';
+    if (has(['qabul', 'rahbar', 'reception', 'прием', 'приём'])) return '/reception';
+    if (has(['yangilik', 'news', 'novost', 'новост'])) return '/news';
+    if (has(['tuman', 'shahar', 'hudud', 'district', 'район'])) return '/districts';
+    if (has(['xizmat', 'service', 'услуг'])) return '/services';
+    if (has(['mulk', 'parcel', 'kadastr raqam', 'участок', 'uchastka'])) return '/property';
+    if (has(['xatlov', '937'])) return '/xatlov';
+    if (has(['bosh sahifa', 'asosiy', 'home', 'главн', 'orqaga'])) return '/';
+    return null;
+  }
+
+  String _navConfirm(String route) {
+    const m = {
+      '/illegal': {'uz': 'Noqonuniy egallangan yerlar sahifasi', 'ru': 'Страница незаконно занятых земель', 'en': 'Illegally occupied lands page'},
+      '/docs': {'uz': 'Hujjatlar', 'ru': 'Документы', 'en': 'Documents'},
+      '/phones': {'uz': 'Telefonlar', 'ru': 'Телефоны', 'en': 'Phones'},
+      '/reception': {'uz': 'Rahbar qabuli', 'ru': 'Приём руководителя', 'en': 'Reception'},
+      '/news': {'uz': 'Yangiliklar', 'ru': 'Новости', 'en': 'News'},
+      '/districts': {'uz': 'Tuman va shaharlar', 'ru': 'Районы и города', 'en': 'Districts'},
+      '/services': {'uz': 'Xizmatlar', 'ru': 'Услуги', 'en': 'Services'},
+      '/property': {'uz': 'Mulk tekshiruvi', 'ru': 'Проверка имущества', 'en': 'Property check'},
+      '/xatlov': {'uz': 'Xatlov', 'ru': 'Опись', 'en': 'Inventory'},
+      '/': {'uz': 'Bosh sahifa', 'ru': 'Главная', 'en': 'Home'},
+    };
+    return (m[route]?[_lang]) ?? '';
   }
 
   // ===== TAP-TO-TALK (qo'lda gapirish) — VAD/amplitude'siz, hamma platformada =====
@@ -311,7 +360,14 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (text != null && text.trim().isNotEmpty) {
       state = state.copyWith(heard: text.trim());
       _logHeard(text.trim());
-      await askAI(text.trim());
+      // tugma bilan ham: avval sahifa-navigatsiya (oldindan tayyor jadval), so'ng AI
+      final route = _matchRoute(text.trim());
+      if (route != null && navTo != null) {
+        navTo!(route);
+        await _speak(_navConfirm(route));
+      } else {
+        await askAI(text.trim());
+      }
     } else {
       final msg = {'uz': 'Eshitmadim, qaytadan urinib ko‘ring.', 'ru': 'Не расслышал, попробуйте снова.', 'en': 'I didn’t catch that, please try again.'}[_lang]!;
       state = state.copyWith(answer: msg);

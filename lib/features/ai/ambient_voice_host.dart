@@ -27,6 +27,7 @@ class _AmbientVoiceHostState extends ConsumerState<AmbientVoiceHost> {
       onAiPage: () => ref.read(currentRouteProvider) == '/ai',
       canListen: () => ref.read(currentRouteProvider) != '/appeal',
       navToAi: () => ref.read(routerProvider).go('/ai'),
+      navTo: (route) => ref.read(routerProvider).go(route),
     );
   }
 
