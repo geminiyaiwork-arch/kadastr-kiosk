@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -38,6 +41,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
   bool _faceMode = false; // JSHSHIR/Pasport: in-page native camera (Face-ID) step
   String? _verifyError; // MyID error (shown to user / for support)
   Map<String, dynamic>? _profile; // MyID verified profile
+  String? _facePhoto; // kameradan olingan yuz fotosi (natijada ko'rsatamiz)
 
   void _pick(String m) {
     setState(() {
@@ -51,6 +55,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
       _faceMode = false;
       _verifyError = null;
       _profile = null;
+      _facePhoto = null;
     });
     if (m == 'qr') _startMyId();
   }
@@ -75,6 +80,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
             .toList();
         setState(() {
           _profile = (r['profile'] is Map) ? Map<String, dynamic>.from(r['profile'] as Map) : null;
+          _facePhoto = photo; // kamera fotosini natijada ko'rsatamiz
           _records = recs;
           _searched = true;
           _loading = false;
@@ -226,16 +232,19 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
               ]),
             ),
           _resultView(L),
-          const SizedBox(height: 18),
-          AsyncView(summary, data: (s) => GridView.count(
-            crossAxisCount: 2,
-            mainAxisSpacing: 14,
-            crossAxisSpacing: 14,
-            childAspectRatio: 5.0,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            children: [for (final d in s.districts) _IllTile(d: d, count: L['count']!)],
-          )),
+          // Tuman jadvали FAQAT tekshiruvdан oldin (natija chiqsa yashiriladi)
+          if (!_searched) ...[
+            const SizedBox(height: 18),
+            AsyncView(summary, data: (s) => GridView.count(
+              crossAxisCount: 2,
+              mainAxisSpacing: 14,
+              crossAxisSpacing: 14,
+              childAspectRatio: 5.0,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              children: [for (final d in s.districts) _IllTile(d: d, count: L['count']!)],
+            )),
+          ],
         ],
       ),
     );
@@ -329,38 +338,92 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
     );
   }
 
+  // Jins kodi → so'z (1=Erkak, 2=Ayol)
+  String _genderLabel(dynamic g, Map<String, String> L) {
+    final s = (g ?? '').toString().trim().toLowerCase();
+    if (s == '1' || s == 'male' || s == 'м' || s == 'm') return L['genderMale'] ?? 'Erkak';
+    if (s == '2' || s == 'female' || s == 'ж' || s == 'f') return L['genderFemale'] ?? 'Ayol';
+    return (g ?? '').toString().trim();
+  }
+
+  Widget _profileCard(Map<String, String> L, Map<String, dynamic> p) {
+    Uint8List? bytes;
+    final ph = _facePhoto;
+    if (ph != null && ph.contains(',')) {
+      try { bytes = base64Decode(ph.split(',').last); } catch (_) {}
+    }
+    final match = p['match'];
+    final rows = <(String, String)>[];
+    void add(String label, dynamic v) {
+      final s = (v ?? '').toString().trim();
+      if (s.isNotEmpty && s != 'null') rows.add((label, s));
+    }
+    add(L['fJshshir']!, p['pinfl']);
+    add(L['fPassport']!, p['passport']);
+    add(L['pBirthDate']!, p['birth_date']);
+    add(L['pBirthPlace']!, p['birth_place']);
+    add(L['pGender']!, _genderLabel(p['gender'], L));
+    add(L['pNationality']!, p['nationality']);
+    add(L['pCitizenship'] ?? 'Fuqarolik', p['citizenship']);
+    add(L['pDocType'] ?? 'Hujjat turi', p['doc_type']);
+    add(L['pPassIssuedBy'] ?? 'Kim tomonidan berilgan', p['pass_issued_by']);
+    add(L['pPassIssuedDate'] ?? 'Berilgan sana', p['pass_issued_date']);
+    add(L['pPassExpiry'] ?? 'Amal qilish muddati', p['pass_expiry_date']);
+    add(L['fRegion']!, p['region']);
+    add(L['fDistrict']!, p['district']);
+    add(L['fMahalla']!, p['mfy']);
+    add(L['pAddress']!, p['address']);
+    add(L['pPhone']!, p['phone']);
+    return KCard(
+      accent: T.blue,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: bytes != null
+                    ? Image.memory(bytes, width: 130, height: 160, fit: BoxFit.cover, gaplessPlayback: true)
+                    : Container(width: 130, height: 160, color: const Color(0xFFEFF3FA), child: const Icon(Icons.person, size: 70, color: T.muted)),
+              ),
+              const SizedBox(width: 20),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('🪪 ${L['profileTitle']}', style: K.cardP.copyWith(color: T.muted, fontSize: 19)),
+                    const SizedBox(height: 6),
+                    Text('${p['name'] ?? ''}', style: K.cardH),
+                    if (match != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(color: const Color(0xFFE6F4EC), borderRadius: BorderRadius.circular(22)),
+                        child: Text('✅ ${L['pMatch'] ?? 'Yuz mosligi'}: $match%',
+                            style: const TextStyle(color: T.green, fontWeight: FontWeight.w800, fontSize: 19)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Divider(color: T.line, height: 1)),
+          KvRows(rows),
+        ],
+      ),
+    );
+  }
+
   Widget _resultView(Map<String, String> L) {
     if (!_searched) return const SizedBox.shrink();
     final p = _profile;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // MyID verified profile (QR method)
-        if (p != null)
-          KCard(
-            accent: T.blue,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('🪪 ${L['profileTitle']}', style: K.cardH),
-                const SizedBox(height: 12),
-                KvRows([
-                  (L['fFio']!, '${p['name'] ?? ''}'),
-                  (L['fJshshir']!, '${p['pinfl'] ?? ''}'),
-                  (L['fPassport']!, '${p['passport'] ?? ''}'),
-                  (L['pBirthDate']!, '${p['birth_date'] ?? ''}'),
-                  (L['pBirthPlace']!, '${p['birth_place'] ?? ''}'),
-                  (L['pGender']!, '${p['gender'] ?? ''}'),
-                  (L['pNationality']!, '${p['nationality'] ?? ''}'),
-                  (L['fRegion']!, '${p['region'] ?? ''}'),
-                  (L['fDistrict']!, '${p['district'] ?? ''}'),
-                  (L['fMahalla']!, '${p['mfy'] ?? ''}'),
-                  (L['pAddress']!, '${p['address'] ?? ''}'),
-                  (L['pPhone']!, '${p['phone'] ?? ''}'),
-                ]),
-              ],
-            ),
-          ),
+        if (p != null) _profileCard(L, p),
         // violation status
         if (_records.isEmpty)
           KCard(accent: T.green, child: Text('✅ ${L['noViolation']}', style: K.cardP.copyWith(color: T.green, fontWeight: FontWeight.w700)))

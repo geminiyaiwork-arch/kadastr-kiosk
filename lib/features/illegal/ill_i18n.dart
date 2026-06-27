@@ -24,6 +24,9 @@ const illI18n = {
     'fKadastr': 'Kadastr raqami', 'fDate': 'Sana',
     'profileTitle': 'Shaxs ma‘lumotlari', 'pBirthDate': 'Tug‘ilgan sana', 'pBirthPlace': 'Tug‘ilgan joy',
     'pGender': 'Jinsi', 'pAddress': 'Manzil', 'pPhone': 'Telefon', 'pNationality': 'Millati',
+    'pCitizenship': 'Fuqaroligi', 'pDocType': 'Hujjat turi', 'pPassIssuedBy': 'Kim tomonidan berilgan',
+    'pPassIssuedDate': 'Berilgan sana', 'pPassExpiry': 'Amal qilish muddati', 'pMatch': 'Yuz mosligi',
+    'genderMale': 'Erkak', 'genderFemale': 'Ayol',
     'violTitle': 'Noqonuniy egallangan yer',
   },
   'ru': {
@@ -49,7 +52,10 @@ const illI18n = {
     'fMahalla': 'Махалля', 'fArea': 'Занятая площадь', 'fType': 'Нарушение', 'fModda': 'Статья', 'fStatus': 'Статус',
     'fKadastr': 'Кадастровый номер', 'fDate': 'Дата',
     'profileTitle': 'Личные данные', 'pBirthDate': 'Дата рождения', 'pBirthPlace': 'Место рождения',
-    'pGender': 'Пол', 'pAddress': 'Адрес', 'pPhone': 'Телефон', 'pNationality': 'Гражданство',
+    'pGender': 'Пол', 'pAddress': 'Адрес', 'pPhone': 'Телефон', 'pNationality': 'Национальность',
+    'pCitizenship': 'Гражданство', 'pDocType': 'Тип документа', 'pPassIssuedBy': 'Кем выдан',
+    'pPassIssuedDate': 'Дата выдачи', 'pPassExpiry': 'Срок действия', 'pMatch': 'Совпадение лица',
+    'genderMale': 'Мужской', 'genderFemale': 'Женский',
     'violTitle': 'Незаконно занятая земля',
   },
   'en': {
@@ -76,6 +82,9 @@ const illI18n = {
     'fKadastr': 'Cadastre number', 'fDate': 'Date',
     'profileTitle': 'Personal data', 'pBirthDate': 'Birth date', 'pBirthPlace': 'Birth place',
     'pGender': 'Gender', 'pAddress': 'Address', 'pPhone': 'Phone', 'pNationality': 'Nationality',
+    'pCitizenship': 'Citizenship', 'pDocType': 'Document type', 'pPassIssuedBy': 'Issued by',
+    'pPassIssuedDate': 'Issue date', 'pPassExpiry': 'Expiry date', 'pMatch': 'Face match',
+    'genderMale': 'Male', 'genderFemale': 'Female',
     'violTitle': 'Illegally occupied land',
   },
 };
