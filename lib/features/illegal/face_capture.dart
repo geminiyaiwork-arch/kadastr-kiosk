@@ -111,10 +111,6 @@ class _FaceCaptureState extends State<FaceCapture> {
     }
   }
 
-  // tiny placeholder so the verify flow runs on Linux (no camera) — backend
-  // errors at the token step before the photo matters.
-  void _proceedNoCam() => widget.onCaptured('data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBD');
-
   @override
   Widget build(BuildContext context) {
     final t = widget.t;
@@ -163,9 +159,7 @@ class _FaceCaptureState extends State<FaceCapture> {
             const Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: T.blue)),
           const SizedBox(height: 18),
           if (ready)
-            KButton(_busy ? t['verifying']! : t['faceCapture']!, onTap: _capture)
-          else if (_noCamera)
-            KButton(t['faceProceed']!, variant: 'navy', onTap: _proceedNoCam),
+            KButton(_busy ? t['verifying']! : t['faceCapture']!, onTap: _capture),
           const SizedBox(height: 10),
           KButton(t['cancel']!, variant: 'outline', onTap: widget.onCancel),
         ],
