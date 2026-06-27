@@ -1,11 +1,10 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../core/env.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/network/models.dart';
 import '../../core/network/repository.dart';
@@ -41,7 +40,9 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
   bool _faceMode = false; // JSHSHIR/Pasport: in-page native camera (Face-ID) step
   String? _verifyError; // MyID error (shown to user / for support)
   Map<String, dynamic>? _profile; // MyID verified profile
-  String? _facePhoto; // kameradan olingan yuz fotosi (natijada ko'rsatamiz)
+  int? _vCode; // MyID result_code (1 = muvaffaqiyatli)
+  int? _vMatch; // yuz mosligi %
+  final _tts = AudioPlayer(); // natijani ovozда aytish
 
   void _pick(String m) {
     setState(() {
@@ -55,7 +56,8 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
       _faceMode = false;
       _verifyError = null;
       _profile = null;
-      _facePhoto = null;
+      _vCode = null;
+      _vMatch = null;
     });
     if (m == 'qr') _startMyId();
   }
@@ -80,16 +82,19 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
             .toList();
         setState(() {
           _profile = (r['profile'] is Map) ? Map<String, dynamic>.from(r['profile'] as Map) : null;
-          _facePhoto = photo; // kamera fotosini natijada ko'rsatamiz
+          _vCode = (r['code'] is num) ? (r['code'] as num).toInt() : 1;
+          _vMatch = (r['match'] is num) ? (r['match'] as num).toInt() : (_profile?['match'] is num ? (_profile!['match'] as num).toInt() : null);
           _records = recs;
           _searched = true;
           _loading = false;
         });
+        _say(recs.isEmpty ? (L['voiceOkClean'] ?? '') : (L['voiceOkViol'] ?? '')); // muvaffaqiyat ovozи
       } else {
         setState(() {
           _verifyError = (r['error']?.toString()) ?? 'MyID xato';
           _loading = false;
         });
+        _say(L['voiceFail'] ?? ''); // yuz mos kelmadi ovozи
       }
     } catch (e) {
       if (mounted) {
@@ -99,6 +104,18 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
         });
       }
     }
+  }
+
+  /// Natijani ovozда aytadi (server TTS → audioplayers).
+  Future<void> _say(String text) async {
+    if (text.trim().isEmpty) return;
+    try {
+      final lang = ref.read(localeProvider);
+      final voice = (lang == 'ru') ? 'madina' : 'sardor';
+      final url = '${Env.apiBase}/tts/synthesize?text=${Uri.encodeComponent(text)}&voice=$voice&lang=$lang';
+      await _tts.stop();
+      await _tts.play(UrlSource(url));
+    } catch (_) {}
   }
 
   Future<void> _startMyId() async {
@@ -146,7 +163,11 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
           _records = recs;
           _searched = true;
           _profile = (r['profile'] is Map) ? Map<String, dynamic>.from(r['profile'] as Map) : null;
+          _vCode = 1;
+          _vMatch = (_profile?['match'] is num) ? (_profile!['match'] as num).toInt() : null;
         });
+        final l2 = illI18n[ref.read(localeProvider)]!;
+        _say(recs.isEmpty ? (l2['voiceOkClean'] ?? '') : (l2['voiceOkViol'] ?? ''));
       }
       return;
     }
@@ -158,6 +179,7 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
     _jshshir.dispose();
     _birth.dispose();
     _pass.dispose();
+    _tts.dispose();
     super.dispose();
   }
 
@@ -338,80 +360,144 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
     );
   }
 
-  // Jins kodi → so'z (1=Erkak, 2=Ayol)
+  // Jins kodi → so'z. 1=Erkak, boshqa har qanday (bo'sh emas)=Ayol.
   String _genderLabel(dynamic g, Map<String, String> L) {
-    final s = (g ?? '').toString().trim().toLowerCase();
-    if (s == '1' || s == 'male' || s == 'м' || s == 'm') return L['genderMale'] ?? 'Erkak';
-    if (s == '2' || s == 'female' || s == 'ж' || s == 'f') return L['genderFemale'] ?? 'Ayol';
-    return (g ?? '').toString().trim();
+    final s = (g ?? '').toString().trim();
+    if (s.isEmpty) return '';
+    return s == '1' ? (L['genderMale'] ?? 'Erkak') : (L['genderFemale'] ?? 'Ayol');
   }
 
-  Widget _profileCard(Map<String, String> L, Map<String, dynamic> p) {
-    Uint8List? bytes;
-    final ph = _facePhoto;
-    if (ph != null && ph.contains(',')) {
-      try { bytes = base64Decode(ph.split(',').last); } catch (_) {}
+  // Tekshiruv natijasi kartasi (shield + holat + yuz mosligi + kod + izoh)
+  Widget _statusCard(Map<String, String> L) {
+    final ok = (_vCode ?? 1) == 1;
+    final note = _noteFor(_vCode ?? 1, L);
+    return Container(
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: ok ? const Color(0xFFEFF8F2) : const Color(0xFFFDEEEE),
+        borderRadius: BorderRadius.circular(T.rLg),
+        border: Border.all(color: ok ? const Color(0x331FA463) : const Color(0x33E5484D), width: 1.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 86,
+            height: 86,
+            decoration: BoxDecoration(color: ok ? T.green : T.recRed, shape: BoxShape.circle),
+            child: Icon(ok ? Icons.verified_user_rounded : Icons.gpp_bad_rounded, color: Colors.white, size: 48),
+          ),
+          const SizedBox(width: 22),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(L['resultTitle'] ?? 'Tekshiruv natijasi',
+                    style: K.cardH.copyWith(color: ok ? T.green : T.recRed)),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 28,
+                  runSpacing: 12,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text('${L['resultState'] ?? 'Holati'}: ', style: K.cardP.copyWith(color: T.muted)),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                        decoration: BoxDecoration(color: ok ? T.green : T.recRed, borderRadius: BorderRadius.circular(20)),
+                        child: Text(ok ? (L['resultOk'] ?? 'Muvaffaqiyatli') : (L['resultBad'] ?? 'Muvaffaqiyatsiz'),
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
+                      ),
+                    ]),
+                    if (_vMatch != null)
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('${L['pMatch'] ?? 'Yuz mosligi'}: ', style: K.cardP.copyWith(color: T.muted)),
+                        Text('$_vMatch%', style: K.cardP.copyWith(color: T.green, fontWeight: FontWeight.w800)),
+                      ]),
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text('${L['resultCode'] ?? 'Kod'}: ', style: K.cardP.copyWith(color: T.muted)),
+                      Text('${_vCode ?? 1}', style: K.cardP.copyWith(color: ok ? T.green : T.recRed, fontWeight: FontWeight.w800)),
+                    ]),
+                  ],
+                ),
+                if (note.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text('${L['resultNote'] ?? 'Izoh'}: $note', style: K.cardP),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _noteFor(int code, Map<String, String> L) {
+    switch (code) {
+      case 1: return L['note1'] ?? 'Barcha tekshiruvlar muvaffaqiyatli yakunlandi.';
+      case 2: return L['note2'] ?? 'Pasport ma’lumotlari noto‘g‘ri.';
+      case 3: return L['note3'] ?? 'Jonlilik tasdiqlanmadi.';
+      case 4: return L['note4'] ?? 'Yuz tanib bo‘lmadi.';
+      default: return '';
     }
-    final match = p['match'];
-    final rows = <(String, String)>[];
-    void add(String label, dynamic v) {
+  }
+
+  // Shaxs ma'lumotlari (ikonкali qatorlar — faqat to'ldirilgan maydonlar)
+  Widget _personCard(Map<String, String> L, Map<String, dynamic> p) {
+    final items = <(IconData, String, String)>[];
+    void add(IconData ic, String label, dynamic v) {
       final s = (v ?? '').toString().trim();
-      if (s.isNotEmpty && s != 'null') rows.add((label, s));
+      if (s.isNotEmpty && s != 'null') items.add((ic, label, s));
     }
-    add(L['fJshshir']!, p['pinfl']);
-    add(L['fPassport']!, p['passport']);
-    add(L['pBirthDate']!, p['birth_date']);
-    add(L['pBirthPlace']!, p['birth_place']);
-    add(L['pGender']!, _genderLabel(p['gender'], L));
-    add(L['pNationality']!, p['nationality']);
-    add(L['pCitizenship'] ?? 'Fuqarolik', p['citizenship']);
-    add(L['pDocType'] ?? 'Hujjat turi', p['doc_type']);
-    add(L['pPassIssuedBy'] ?? 'Kim tomonidan berilgan', p['pass_issued_by']);
-    add(L['pPassIssuedDate'] ?? 'Berilgan sana', p['pass_issued_date']);
-    add(L['pPassExpiry'] ?? 'Amal qilish muddati', p['pass_expiry_date']);
-    add(L['fRegion']!, p['region']);
-    add(L['fDistrict']!, p['district']);
-    add(L['fMahalla']!, p['mfy']);
-    add(L['pAddress']!, p['address']);
-    add(L['pPhone']!, p['phone']);
+    add(Icons.person_outline, L['fFio']!, p['name']);
+    add(Icons.tag, L['fJshshir']!, p['pinfl']);
+    add(Icons.badge_outlined, L['fPassport']!, p['passport']);
+    add(Icons.wc_outlined, L['pGender']!, _genderLabel(p['gender'], L));
+    add(Icons.calendar_today_outlined, L['pBirthDate']!, p['birth_date']);
+    add(Icons.location_on_outlined, L['pBirthPlace']!, p['birth_place']);
+    add(Icons.public, L['pNationality']!, p['nationality']);
+    add(Icons.flag_outlined, L['pCitizenship'] ?? 'Fuqaroligi', p['citizenship']);
+    add(Icons.description_outlined, L['pDocType'] ?? 'Hujjat turi', p['doc_type']);
+    add(Icons.account_balance_outlined, L['pPassIssuedBy'] ?? 'Kim bergan', p['pass_issued_by']);
+    add(Icons.event_available_outlined, L['pPassIssuedDate'] ?? 'Berilgan sana', p['pass_issued_date']);
+    add(Icons.event_busy_outlined, L['pPassExpiry'] ?? 'Amal muddati', p['pass_expiry_date']);
+    add(Icons.map_outlined, L['fRegion']!, p['region']);
+    add(Icons.location_city_outlined, L['fDistrict']!, p['district']);
+    add(Icons.home_outlined, L['fMahalla']!, p['mfy']);
+    add(Icons.place_outlined, L['pAddress']!, p['address']);
+    add(Icons.phone_outlined, L['pPhone']!, p['phone']);
     return KCard(
       accent: T.blue,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: bytes != null
-                    ? Image.memory(bytes, width: 130, height: 160, fit: BoxFit.cover, gaplessPlayback: true)
-                    : Container(width: 130, height: 160, color: const Color(0xFFEFF3FA), child: const Icon(Icons.person, size: 70, color: T.muted)),
+          Row(children: [
+            Container(
+              width: 56, height: 56,
+              decoration: const BoxDecoration(color: T.blue, shape: BoxShape.circle),
+              child: const Icon(Icons.person, color: Colors.white, size: 32),
+            ),
+            const SizedBox(width: 16),
+            Text(L['profileTitle'] ?? 'Shaxs ma’lumotlari', style: K.cardH.copyWith(color: T.blue)),
+          ]),
+          const SizedBox(height: 8),
+          for (var i = 0; i < items.length; i++)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              decoration: BoxDecoration(
+                border: i == items.length - 1 ? null : const Border(bottom: BorderSide(color: T.line)),
               ),
-              const SizedBox(width: 20),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('🪪 ${L['profileTitle']}', style: K.cardP.copyWith(color: T.muted, fontSize: 19)),
-                    const SizedBox(height: 6),
-                    Text('${p['name'] ?? ''}', style: K.cardH),
-                    if (match != null) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(color: const Color(0xFFE6F4EC), borderRadius: BorderRadius.circular(22)),
-                        child: Text('✅ ${L['pMatch'] ?? 'Yuz mosligi'}: $match%',
-                            style: const TextStyle(color: T.green, fontWeight: FontWeight.w800, fontSize: 19)),
-                      ),
-                    ],
-                  ],
-                ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(items[i].$1, color: T.blue, size: 28),
+                  const SizedBox(width: 18),
+                  SizedBox(width: 190, child: Text(items[i].$2, style: K.cardP.copyWith(color: T.muted))),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(items[i].$3, style: K.cardP.copyWith(fontWeight: FontWeight.w700, color: T.navy))),
+                ],
               ),
-            ],
-          ),
-          const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Divider(color: T.line, height: 1)),
-          KvRows(rows),
+            ),
         ],
       ),
     );
@@ -423,10 +509,18 @@ class _IllegalScreenState extends ConsumerState<IllegalScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (p != null) _profileCard(L, p),
+        if (p != null) ...[
+          _statusCard(L),
+          const SizedBox(height: 18),
+          _personCard(L, p),
+        ],
         // violation status
         if (_records.isEmpty)
-          KCard(accent: T.green, child: Text('✅ ${L['noViolation']}', style: K.cardP.copyWith(color: T.green, fontWeight: FontWeight.w700)))
+          KCard(accent: T.green, child: Row(children: [
+            const Icon(Icons.check_circle, color: T.green, size: 34),
+            const SizedBox(width: 14),
+            Expanded(child: Text(L['noViolation']!, style: K.cardP.copyWith(color: T.green, fontWeight: FontWeight.w700))),
+          ]))
         else ...[
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
