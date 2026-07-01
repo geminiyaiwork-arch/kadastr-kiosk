@@ -14,7 +14,7 @@ class Env {
   static const heartbeatMs = 60000;
 
   // App version (reported via heartbeat; keep in sync with pubspec).
-  static const appVersion = '1.6.1';
+  static const appVersion = '1.6.2';
 
   // Voice timing + native VAD (dBFS amplitude from `record`; tune on Windows mic)
   static const onsetDb = -38.0; // above this = speech onset

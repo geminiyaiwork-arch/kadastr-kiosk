@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/env.dart';
 import '../../core/i18n/strings.dart';
-import '../../core/network/api_client.dart';
 import '../../core/network/repository.dart';
 import '../../core/theme/icons.dart';
 import '../../core/theme/tokens.dart';
@@ -56,7 +56,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final v = ref.watch(voiceProvider);
     final avatar = ref.watch(avatarProvider).valueOrNull;
     final enabled = avatar?.enabled ?? false;
-    final url = enabled ? resolveMedia('/avatar/file?${avatar!.imageQuery}') : null;  // video bo'lsa idle jpg (36MB mp4 render buzadi)
+    final url = enabled ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}' : null;  // /api/v1 bilan (resolveMedia 404 berardi); video bo'lsa idle jpg
     final hasData = v.answer.isNotEmpty;
 
     return Container(
