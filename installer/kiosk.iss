@@ -14,6 +14,9 @@ ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=admin
 WizardStyle=modern
+; Avto-yangilanish: ishlab turgan kioskни yopadi, yangilaydi (SOKIN rejim)
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"

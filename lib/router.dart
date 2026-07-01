@@ -18,8 +18,12 @@ import 'features/social/social_screen.dart';
 /// page-aware behaviour: direct on /ai, paused on /appeal).
 final currentRouteProvider = StateProvider<String>((_) => '/');
 
+/// Root navigator — global dialoglar (auto-update oynasi) uchun.
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: '/',
     redirect: (context, state) {
       final loc = state.uri.path;

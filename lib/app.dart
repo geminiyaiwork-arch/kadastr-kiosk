@@ -3,10 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/env.dart';
 import 'core/services/heartbeat.dart';
+import 'core/services/update_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/tokens.dart';
 import 'features/ai/ambient_voice_host.dart';
-import 'features/ai/remote_qr_overlay.dart';
 import 'router.dart';
 import 'shell/idle_attract_host.dart';
 import 'shell/virtual_keyboard.dart';
@@ -23,8 +23,10 @@ class KioskApp extends ConsumerWidget {
       theme: buildTheme(),
       routerConfig: router,
       builder: (context, child) => HeartbeatHost(
-        child: AmbientVoiceHost(
-          child: IdleAttractHost(child: _Canvas(child: child ?? const SizedBox())),
+        child: UpdateHost(
+          child: AmbientVoiceHost(
+            child: IdleAttractHost(child: _Canvas(child: child ?? const SizedBox())),
+          ),
         ),
       ),
     );
@@ -52,7 +54,7 @@ class _Canvas extends StatelessWidget {
               child: Stack(
                 children: [
                   Positioned.fill(child: child),
-                  const RemoteQrOverlay(), // burchakдаги telefon-QR pult
+                  // const RemoteQrOverlay(), // telefon-QR pult — vaqtincha olib tashlandi (joyi keyin aytiladi)
                   const Positioned(left: 0, right: 0, bottom: 0, child: VkOverlay()),
                 ],
               ),
