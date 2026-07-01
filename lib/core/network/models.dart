@@ -148,17 +148,21 @@ class IllegalRecord {
 
 class AvatarConfig {
   final bool enabled;
-  final String file, type, voice;
-  final int ts;
-  const AvatarConfig({this.enabled = false, this.file = '', this.type = '', this.voice = 'madina', this.ts = 0});
+  final String file, type, voice, idle;
+  final int ts, idleTs;
+  const AvatarConfig({this.enabled = false, this.file = '', this.type = '', this.voice = 'madina', this.ts = 0, this.idle = '', this.idleTs = 0});
   factory AvatarConfig.fromJson(Map<String, dynamic> j) => AvatarConfig(
         enabled: j['enabled'] == true,
         file: _s(j['file']), type: _s(j['type']),
         voice: _s(j['voice'].toString().isEmpty ? 'madina' : j['voice']),
         ts: _n(j['ts']).toInt(),
+        idle: _s(j['idle']), idleTs: _n(j['idleTs']).toInt(),
       );
   /// gender key for /tts/synthesize&voice= (sardor/male => male else female)
   bool get male => RegExp(r'sardor|male|erkak|^m$', caseSensitive: false).hasMatch(voice);
+  /// Ko'rsatiladigan RASM URL parametri. Avatar VIDEO bo'lsa — idle (kichik jpg),
+  /// aks holda faylning o'zi. (Image.network 36MB mp4 ni yuklamaydi — render buziladi.)
+  String get imageQuery => idle.isNotEmpty ? 'kind=idle&v=$idleTs' : 'v=$ts';
 }
 
 class NewsItem {

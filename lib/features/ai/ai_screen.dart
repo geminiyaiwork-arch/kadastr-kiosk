@@ -56,7 +56,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final v = ref.watch(voiceProvider);
     final avatar = ref.watch(avatarProvider).valueOrNull;
     final enabled = avatar?.enabled ?? false;
-    final url = enabled ? resolveMedia('/avatar/file?v=${avatar!.ts}') : null;
+    final url = enabled ? resolveMedia('/avatar/file?${avatar!.imageQuery}') : null;  // video bo'lsa idle jpg (36MB mp4 render buzadi)
     final hasData = v.answer.isNotEmpty;
 
     return Container(

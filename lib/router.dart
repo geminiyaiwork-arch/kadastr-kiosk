@@ -56,40 +56,21 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 });
 
-/// Sahifa o'tish EFEKTI: yangi sahifa "yig'iladi" (kattalashib, ko'tarilib, so'nishдan
-/// paydo bo'ladi), eski sahifa "shamol bo'lib sochiladi" (kattalashib, burilib, uchib so'nadi).
+/// Sahifa o'tish EFEKTI — YENGIL (fade + mayin scale). Og'ir transform/rotate
+/// ishlatilmaydi (zaif videokartada render buzilmasligi uchun).
 Page<void> _fx(GoRouterState state, Widget child) => CustomTransitionPage<void>(
       key: state.pageKey,
-      transitionDuration: const Duration(milliseconds: 560),
-      reverseTransitionDuration: const Duration(milliseconds: 460),
+      transitionDuration: const Duration(milliseconds: 340),
+      reverseTransitionDuration: const Duration(milliseconds: 260),
       child: child,
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        final inC = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
-        final outC = CurvedAnimation(parent: secondaryAnimation, curve: Curves.easeInCubic);
-        return AnimatedBuilder(
-          animation: Listenable.merge([animation, secondaryAnimation]),
-          child: child,
-          builder: (context, child) {
-            final i = inC.value;   // 0->1 kirish (yig'ilish)
-            final o = outC.value;  // 0->1 chiqish (sochilish)
-            final leaving = o > 0.0001;
-            final scale = leaving ? (1 + 0.20 * o) : (0.90 + 0.10 * i);
-            final opacity = (leaving ? (1 - o) : i).clamp(0.0, 1.0);
-            final dx = leaving ? (70.0 * o) : 0.0;
-            final dy = leaving ? (-36.0 * o) : (40.0 * (1 - i));
-            final rot = leaving ? (0.07 * o) : (0.045 * (1 - i));
-            return Opacity(
-              opacity: opacity,
-              child: Transform(
-                alignment: Alignment.center,
-                transform: Matrix4.identity()
-                  ..translate(dx, dy)
-                  ..rotateZ(rot)
-                  ..scale(scale),
-                child: child,
-              ),
-            );
-          },
+        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOut, reverseCurve: Curves.easeIn);
+        return FadeTransition(
+          opacity: curved,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.985, end: 1.0).animate(curved),
+            child: child,
+          ),
         );
       },
     );
