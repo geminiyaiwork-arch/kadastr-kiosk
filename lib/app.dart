@@ -6,6 +6,7 @@ import 'core/services/heartbeat.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/tokens.dart';
 import 'features/ai/ambient_voice_host.dart';
+import 'features/ai/remote_qr_overlay.dart';
 import 'router.dart';
 import 'shell/idle_attract_host.dart';
 import 'shell/virtual_keyboard.dart';
@@ -51,6 +52,7 @@ class _Canvas extends StatelessWidget {
               child: Stack(
                 children: [
                   Positioned.fill(child: child),
+                  const RemoteQrOverlay(), // burchakдаги telefon-QR pult
                   const Positioned(left: 0, right: 0, bottom: 0, child: VkOverlay()),
                 ],
               ),

@@ -6,6 +6,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/models.dart';
 import '../../core/network/repository.dart';
 import '../../core/theme/text_styles.dart';
+import '../../core/util/fmt.dart';
 import '../../core/theme/tokens.dart';
 import '../../shell/kiosk_shell.dart';
 import '../common/kfield.dart';
@@ -167,33 +168,161 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   }
 }
 
-/// Xatlov (Law 937) — informational.
-class XatlovScreen extends ConsumerWidget {
+/// Xatlov (937) — Andijon: tumanlar kesimi → tuman ustiga bosilsa PADROBNI (barcha ustunlar).
+class XatlovScreen extends ConsumerStatefulWidget {
   const XatlovScreen({super.key});
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<XatlovScreen> createState() => _XatlovScreenState();
+}
+
+class _XatlovScreenState extends ConsumerState<XatlovScreen> {
+  String? _sel; // tanlangan tuman kodi (null = tumanlar ro'yxati)
+
+  String? _findKey(List cols, List<String> needles) {
+    for (final c in cols) {
+      final s = '${c['group'] ?? ''} ${c['label'] ?? ''}'.toLowerCase();
+      if (needles.every((n) => s.contains(n))) return c['key'] as String?;
+    }
+    return null;
+  }
+
+  String _val(Map v, String? key) {
+    if (key == null) return '—';
+    final x = v[key];
+    if (x == null) return '—';
+    final n = num.tryParse('$x');
+    return n != null ? fmt(n) : '$x';
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final t = ref.watch(trProvider);
-    final lang = ref.watch(localeProvider);
-    final body = {
-      'uz': 'O‘zbekiston Respublikasi Vazirlar Mahkamasining 937-sonli qarori asosida '
-          'bino va inshootlar davlat kadastri yuritiladi. Xatlov — ko‘chmas mulk obyektlarini '
-          'aniqlash, ro‘yxatga olish va baholash jarayoni. Kerakli ma’lumot uchun tegishli '
-          'bo‘lim yoki call-markazga murojaat qiling.',
-      'ru': 'На основании постановления Кабинета Министров №937 ведётся государственный '
-          'кадастр зданий и сооружений. Опись — процесс выявления, регистрации и оценки '
-          'объектов недвижимости. За информацией обратитесь в соответствующий отдел или колл-центр.',
-      'en': 'Under Cabinet of Ministers Resolution No. 937, the state cadastre of buildings '
-          'and structures is maintained. Inventory is the process of identifying, registering '
-          'and valuing real-estate objects. For details, contact the relevant office or call centre.',
-    }[lang]!;
+    final async = ref.watch(xatlov937Provider);
     return KioskScaffold(
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          PageHead(t['pXatlov']),
-          KCard(child: Text(body, style: K.cardP)),
+          PageHead(t['pXatlov'], sub: _sel == null ? 'Andijon viloyati — tumanlar kesimida' : 'Andijon viloyati'),
+          AsyncView(async, data: (d) {
+            final cols = (d['columns'] as List?) ?? const [];
+            final dist = (d['districts'] as List?) ?? const [];
+            if (dist.isEmpty) return _info();
+            final mfyK = _findKey(cols, ['мфй', 'сони']);
+            final objK = _findKey(cols, ['маҳалладаги']);
+            final xatK = _findKey(cols, ['хатлов ўтказилган']);
+            if (_sel != null) {
+              for (final raw in dist) {
+                final x = Map<String, dynamic>.from(raw as Map);
+                if ('${x['code']}' == _sel) return _detail(x, cols);
+              }
+              _sel = null;
+            }
+            return _listView(Map<String, dynamic>.from(d as Map), dist, mfyK, objK, xatK);
+          }),
         ],
       ),
     );
+  }
+
+  Widget _listView(Map<String, dynamic> d, List dist, String? mfyK, String? objK, String? xatK) {
+    final total = Map<String, dynamic>.from((d['total'] as Map?) ?? const {});
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      KCard(accent: T.green, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('${d['region'] ?? 'Андижон вилояти'} — жами', style: K.cardH.copyWith(color: T.green)),
+        if ('${d['asOf'] ?? ''}'.isNotEmpty)
+          Padding(padding: const EdgeInsets.only(top: 4), child: Text('Sana: ${d['asOf']}', style: K.pgSub)),
+        const SizedBox(height: 14),
+        Row(children: [
+          _kpi('МФЙ', _val(total, mfyK)),
+          _kpi('Объектлар', _val(total, objK)),
+          _kpi('Хатлов', _val(total, xatK)),
+        ]),
+      ])),
+      for (final raw in dist)
+        Builder(builder: (_) {
+          final x = Map<String, dynamic>.from(raw as Map);
+          final v = Map<String, dynamic>.from((x['values'] as Map?) ?? const {});
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setState(() => _sel = '${x['code']}'),
+            child: KCard(child: Row(children: [
+              Expanded(child: Text('${x['name']}', style: K.cardH)),
+              _mini('МФЙ', _val(v, mfyK)),
+              _mini('Объект', _val(v, objK)),
+              _mini('Хатлов', _val(v, xatK)),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right_rounded, size: 42, color: T.muted),
+            ])),
+          );
+        }),
+    ]);
+  }
+
+  Widget _detail(Map<String, dynamic> dd, List cols) {
+    final v = Map<String, dynamic>.from((dd['values'] as Map?) ?? const {});
+    final groups = <String, List<Map>>{};
+    final order = <String>[];
+    for (final raw in cols) {
+      final c = Map<String, dynamic>.from(raw as Map);
+      final g = '${c['group'] ?? ''}';
+      groups.putIfAbsent(g, () { order.add(g); return <Map>[]; }).add(c);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(padding: const EdgeInsets.only(bottom: 8), child: Row(children: [
+        GestureDetector(
+          onTap: () => setState(() => _sel = null),
+          child: Container(
+            width: 72, height: 72, alignment: Alignment.center,
+            decoration: BoxDecoration(color: Colors.white, border: Border.all(color: T.line, width: 1.5), borderRadius: BorderRadius.circular(16), boxShadow: T.shadow),
+            child: const Text('‹', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, color: T.navy)),
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(child: Text('${dd['name']}', style: K.pgTitle)),
+      ])),
+      for (final g in order) ...[
+        Padding(padding: const EdgeInsets.fromLTRB(4, 14, 4, 6), child: Text(g, style: K.cardH.copyWith(color: T.blue))),
+        KCard(child: Column(children: [
+          for (var i = 0; i < groups[g]!.length; i++)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(border: i == groups[g]!.length - 1 ? null : const Border(bottom: BorderSide(color: T.line))),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(child: Text('${groups[g]![i]['label']}', style: K.cardP)),
+                const SizedBox(width: 14),
+                Text(_val(v, groups[g]![i]['key'] as String?), style: K.cardP.copyWith(fontWeight: FontWeight.w800, color: T.navy)),
+              ]),
+            ),
+        ])),
+      ],
+    ]);
+  }
+
+  Widget _kpi(String l, String v) => Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(v, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: T.navy)),
+          Text(l, style: K.pgSub),
+        ]),
+      );
+
+  Widget _mini(String l, String v) => Padding(
+        padding: const EdgeInsets.only(left: 18),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(v, style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w800, color: T.navy)),
+          Text(l, style: const TextStyle(fontSize: 16, color: T.muted)),
+        ]),
+      );
+
+  Widget _info() {
+    final lang = ref.watch(localeProvider);
+    final body = {
+      'uz': 'O‘zbekiston Respublikasi Vazirlar Mahkamasining 937-sonli qarori asosida bino va inshootlar davlat '
+          'kadastri yuritiladi. Bu yerda Andijon viloyati bo‘yicha xatlov ma’lumotlari ko‘rsatiladi (hozircha yuklanmagan).',
+      'ru': 'На основании постановления №937 ведётся государственный кадастр зданий и сооружений. Здесь '
+          'отображаются данные описи по Андижанской области (пока не загружены).',
+      'en': 'Under Resolution No. 937, the state cadastre of buildings is maintained. Andijan region inventory '
+          'data appears here (not uploaded yet).',
+    }[lang]!;
+    return KCard(child: Text(body, style: K.cardP));
   }
 }

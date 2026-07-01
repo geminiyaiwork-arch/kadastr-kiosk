@@ -49,6 +49,12 @@ final newsProvider = FutureProvider<List<NewsItem>>((ref) async {
 List<T> _list<T>(dynamic data, T Function(Map<String, dynamic>) f) =>
     data is List ? data.map((e) => f(Map<String, dynamic>.from(e as Map))).toList() : <T>[];
 
+/// 937-xatlov — Andijon (viloyat jami + tumanlar + barcha ustunlar). Excel'дагидек.
+final xatlov937Provider = FutureProvider<Map<String, dynamic>>((ref) async {
+  final r = await ref.read(dioProvider).get('/xatlov937');
+  return Map<String, dynamic>.from(r.data as Map);
+});
+
 final avatarProvider = FutureProvider<AvatarConfig>((ref) async {
   try {
     final r = await ref.read(dioProvider).get('/avatar');

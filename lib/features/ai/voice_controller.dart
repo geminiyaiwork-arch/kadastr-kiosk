@@ -290,8 +290,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
     if (has(['hujjat', 'document', 'документ', 'spravka'])) return '/docs';
     if (has(['telefon', 'phone', 'телефон', 'raqam', 'aloqa'])) return '/phones';
+    if (has(['murojaat', 'appeal', 'обращ', 'жалоб', 'shikoyat', 'ariza topshir', 'murojat'])) return '/appeal';
     if (has(['qabul', 'rahbar', 'reception', 'прием', 'приём'])) return '/reception';
     if (has(['yangilik', 'news', 'novost', 'новост'])) return '/news';
+    if (has(['ijtimoiy', 'social', 'tarmoq', 'instagram', 'telegram', 'facebook', 'youtube', 'соцсет'])) return '/social';
     if (has(['tuman', 'shahar', 'hudud', 'district', 'район'])) return '/districts';
     if (has(['xizmat', 'service', 'услуг'])) return '/services';
     if (has(['mulk', 'parcel', 'kadastr raqam', 'участок', 'uchastka'])) return '/property';
@@ -300,18 +302,21 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     return null;
   }
 
+  // Sahifага o'tgaach OVOZLI o'qib beriladigan matn (nafaqat nomi — sahifани tushuntiradi).
   String _navConfirm(String route) {
     const m = {
-      '/illegal': {'uz': 'Noqonuniy egallangan yerlar sahifasi', 'ru': 'Страница незаконно занятых земель', 'en': 'Illegally occupied lands page'},
-      '/docs': {'uz': 'Hujjatlar', 'ru': 'Документы', 'en': 'Documents'},
-      '/phones': {'uz': 'Telefonlar', 'ru': 'Телефоны', 'en': 'Phones'},
-      '/reception': {'uz': 'Rahbar qabuli', 'ru': 'Приём руководителя', 'en': 'Reception'},
-      '/news': {'uz': 'Yangiliklar', 'ru': 'Новости', 'en': 'News'},
-      '/districts': {'uz': 'Tuman va shaharlar', 'ru': 'Районы и города', 'en': 'Districts'},
-      '/services': {'uz': 'Xizmatlar', 'ru': 'Услуги', 'en': 'Services'},
-      '/property': {'uz': 'Mulk tekshiruvi', 'ru': 'Проверка имущества', 'en': 'Property check'},
-      '/xatlov': {'uz': 'Xatlov', 'ru': 'Опись', 'en': 'Inventory'},
-      '/': {'uz': 'Bosh sahifa', 'ru': 'Главная', 'en': 'Home'},
+      '/illegal': {'uz': 'Noqonuniy egallangan yerlar bo‘limi. Bu yerda tuman va shaharlar kesimida noqonuniy yerlar soni ko‘rsatilgan. O‘z ma’lumotingizni tekshirish uchun shaxsингизни tasdiqlang.', 'ru': 'Раздел незаконно занятых земель. Здесь показано количество по районам и городам.', 'en': 'Illegally occupied lands section, by district and city.'},
+      '/docs': {'uz': 'Hujjatlar va narxlar bo‘limi. Kadastr xizmatlari uchun kerakli hujjatlar va ularning narxlari.', 'ru': 'Раздел документов и цен на кадастровые услуги.', 'en': 'Documents and prices for cadastre services.'},
+      '/phones': {'uz': 'Telefonlar va aloqa raqamlari bo‘limi. Kerakli bo‘lim raqamlarини shu yerdан toping.', 'ru': 'Телефоны и контакты.', 'en': 'Phone numbers and contacts.'},
+      '/reception': {'uz': 'Rahbar qabuli bo‘limi. Qabul kunlari bilan tanishing va qabulga yozilишing mumkin.', 'ru': 'Приём руководителя. Можно записаться на приём.', 'en': 'Manager reception. You can book a reception.'},
+      '/appeal': {'uz': 'Murojaat yuborish bo‘limi. Ism, telefon va murojaat matnini yozib yuboring — javob telefon orqali beriladi.', 'ru': 'Раздел подачи обращения. Ответ дадут по телефону.', 'en': 'Submit an appeal here. We will reply by phone.'},
+      '/social': {'uz': 'Ijtimoiy tarmoqlar bo‘limi. Rasmiy sahifalarга o‘ting.', 'ru': 'Раздел социальных сетей.', 'en': 'Social networks section.'},
+      '/news': {'uz': 'Yangiliklar bo‘limi. Palataning so‘nggi yangiliklarи bilan tanishing.', 'ru': 'Раздел новостей.', 'en': 'News section.'},
+      '/districts': {'uz': 'Tumanlar va shaharlar bo‘limi. Har bir hudud bo‘yicha ma’lumot va rahbariyat.', 'ru': 'Районы и города, информация по каждому.', 'en': 'Districts and cities information.'},
+      '/services': {'uz': 'Xizmatlar bo‘limi. Barcha kadastr xizmatlarини shu yerda ko‘ring.', 'ru': 'Раздел услуг.', 'en': 'Services section.'},
+      '/property': {'uz': 'Ko‘chmas mulk tekshiruvi bo‘limi. Kadastr raqami bo‘yicha mulk holatini tekshiring.', 'ru': 'Проверка недвижимости по кадастровому номеру.', 'en': 'Property check by cadastre number.'},
+      '/xatlov': {'uz': 'To‘qqiz yuz o‘ttiz yetti-sonli qaror bo‘yicha xatlov bo‘limi. Andijon viloyati tumanları kesimida mahallalar va obyektlar xatlovi. Tuman ustiga bosib batafsil ma’lumotni ko‘ring.', 'ru': 'Раздел описи по постановлению 937 — по районам Андижанской области.', 'en': 'Inventory under Resolution 937, by Andijan districts.'},
+      '/': {'uz': 'Bosh sahifa. Kerakli bo‘limni tanlang yoki ovoz bilan ayting.', 'ru': 'Главная страница.', 'en': 'Home page.'},
     };
     return (m[route]?[_lang]) ?? '';
   }
@@ -391,6 +396,31 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (answer.trim().isEmpty) answer = _fallback();
     state = state.copyWith(answer: answer, table: table);
     await _speak(answer);
+  }
+
+  /// Telefon ovozli pultдан kelgan buyruq (QR orqali) — wake-word shart emas, to'g'ridan-to'g'ri bajaradi.
+  Future<void> handleRemoteText(String text) async {
+    final q = text.trim();
+    if (q.isEmpty) return;
+    _busy = true; // ambient mikrofonni pauza qiladi (to'qnashmasin)
+    try {
+      await _player.stop();
+    } catch (_) {}
+    state = state.copyWith(heard: q, clearError: true);
+    _logHeard(q);
+    final route = _matchRoute(q);
+    if (route != null && navTo != null) {
+      navTo!(route);
+      await _speak(_navConfirm(route));
+      return;
+    }
+    navToAi?.call();
+    await _sleep(250);
+    if (q.length >= 2) {
+      await askAI(q);
+    } else {
+      await _speak(_prompt());
+    }
   }
 
   String _fallback() => {

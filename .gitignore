@@ -41,3 +41,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local build artifacts (built via installer/build-deb.sh / CI)
+installer/*.deb
+installer/deb-build/
+linux/myid-camera
+linux/myid-webview
