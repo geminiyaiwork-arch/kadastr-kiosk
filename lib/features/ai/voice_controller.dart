@@ -489,19 +489,25 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     final voice = (ref.read(avatarProvider).valueOrNull?.male ?? false) ? 'sardor' : 'madina';
     final url = '${Env.apiBase}/tts/synthesize?text=${Uri.encodeComponent(clean.substring(0, min(clean.length, 800)))}'
         '&voice=$voice&lang=$_lang';
+    // ignore: avoid_print
+    print('[tts] speak boshlanyapti (${clean.length} belgi)');
     state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
     try {
       await _player.stop();
-      // Timeout matn uzunligiga bog'liq (800 belgi ≈ 50-70s audio). Qisqa 30s edi:
-      // audio tugamay _busy=false bo'lib, mikrofon KAI'ning O'Z ovozini yozib olardi
-      // (o'z-o'ziga javob berish sikli). Timeout'da player ham TO'XTATILADI.
+      // MUHIM: onPlayerComplete.first.timeout(onTimeout:...) ISHLATILMAYDI —
+      // audioplayers'da runtime tip-xatosi beradi (Future<AudioEvent> vs () => Null)
+      // va ovoz UMUMAN chalinmasdi. Future.any tip-xavfsiz: tugash hodisasi YOKI
+      // matn uzunligiga mos cap-vaqt (800 belgi ≈ 50-70s) — qaysi biri avval.
       final capSec = 15 + (clean.length ~/ 10);
-      final done = _player.onPlayerComplete.first.timeout(Duration(seconds: capSec), onTimeout: () {
-        try { _player.stop(); } catch (_) {}
-      });
+      final done = _player.onPlayerComplete.first;
       await _player.play(UrlSource(url));
-      await done;
-    } catch (_) {}
+      await Future.any<void>([done, Future<void>.delayed(Duration(seconds: capSec))]);
+      try { await _player.stop(); } catch (_) {}   // cap'da to'xtatiladi (o'z ovozini eshitmasin)
+    } catch (e) {
+      // Ovoz chalinmasa sababи konsolда ko'rinsin (jim yutilib ketmasin)
+      // ignore: avoid_print
+      print('[tts] play xato: $e');
+    }
     state = state.copyWith(speaking: false);
     _busy = false;
   }
