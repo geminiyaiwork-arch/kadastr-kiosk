@@ -31,12 +31,12 @@ class VoiceUiState {
     this.error,
   });
 
-  VoiceUiState copyWith({VoicePhase? phase, String? heard, String? answer, List<List<dynamic>>? table, bool? speaking, bool? recording, String? error, bool clearError = false}) =>
+  VoiceUiState copyWith({VoicePhase? phase, String? heard, String? answer, List<List<dynamic>>? table, bool? speaking, bool? recording, String? error, bool clearError = false, bool clearTable = false}) =>
       VoiceUiState(
         phase: phase ?? this.phase,
         heard: heard ?? this.heard,
         answer: answer ?? this.answer,
-        table: table ?? this.table,
+        table: clearTable ? null : (table ?? this.table),
         speaking: speaking ?? this.speaking,
         recording: recording ?? this.recording,
         error: clearError ? null : (error ?? this.error),
@@ -65,6 +65,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   bool _on = false;
   bool _busy = false;
   String _lang = 'uz';
+  DateTime _lastRepeat = DateTime.fromMillisecondsSinceEpoch(0);
 
   bool Function()? onAiPage; // direct mode (no wake needed)
   bool Function()? canListen; // false on the appeal page (camera owns the mic)
@@ -114,6 +115,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     state = state.copyWith(phase: VoicePhase.off, speaking: false);
   }
 
+  /// AI sahifasiga qayta kirilganda ESKI javob/jadval tozalanadi —
+  /// avatar to'liq ekranda salomlashadi (eski karta ustida emas).
+  void resetConversation() {
+    state = state.copyWith(answer: '', heard: '', clearTable: true);
+  }
+
   /// Speak a greeting / prompt (used when entering the AI page or on wake-only).
   Future<void> greet(String text) async {
     if (_busy) return;
@@ -140,6 +147,14 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       final text = await _stt(path);
       if (text != null && text.isNotEmpty && _valid(text)) {
         await _handle(text);
+      } else if ((onAiPage?.call() ?? false) &&
+          text != null &&
+          text.trim().length >= 2 &&
+          DateTime.now().difference(_lastRepeat).inSeconds >= 20) {
+        // AI sahifasida TUSHUNARSIZ gap — qaytadan so'raymiz (20s cooldown:
+        // fon shovqinida har 3.6s "tushunmadim" spam bo'lmasin)
+        _lastRepeat = DateTime.now();
+        await _speak(_repeatPrompt());
       } else {
         _busy = false;
       }
@@ -164,6 +179,8 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       await _sleep(150);
       waited += 150;
     }
+    // Tap-to-talk boshlangan bo'lsa mikrofon ENDI unga tegishli — to'xtatib qo'ymaymiz
+    if (_manual) return null;
     await _stopRec();
     if (!_on || _busy) return null;
     try {
@@ -260,8 +277,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
     // 1) OVOZLI SAHIFA-NAVIGATSIYA — oldindan tayyor sahifaга o'tadi (jadval shu yerда,
     //    STT aniqligига bog'liq emas). Masalan "noqonuniy yerlar" → /illegal.
+    //    MUHIM: AI sahifasida FAQAT aniq "och/ko'rsat sahifa" buyrug'ida o'tadi —
+    //    oddiy savollar ("xatlov nima") sahifadan chiqarmaydi, AI javob beradi.
     final route = _matchRoute(content);
-    if (route != null && navTo != null) {
+    if (route != null && navTo != null && (!onAi || _openCmd(content))) {
       navTo!(route);
       await _speak(_navConfirm(route));
       return;
@@ -278,14 +297,28 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
   }
 
+  /// AI sahifasida sahifaga o'tish uchun ANIQ buyruq kerak: "…sahifasini och",
+  /// "…bo'limini ochib ber", "…ga o't". Oddiy savol bo'lsa — navigatsiya YO'Q.
+  bool _openCmd(String text) {
+    final t = text.toLowerCase().replaceAll(RegExp(r"['’ʻ`]"), '');
+    // FAQAT to'liq buyruq-so'zlar (\b ikkala tomonda) — "ochiq/otkazilgan/bolimi" kabi
+    // oddiy so'zlar buyruq deb qabul qilinMAYDI (aks holda savol sahifaga uloqtirardi).
+    return RegExp(r'\b(och|oching|ochib|ochsin|kir|kiring|kirgiz|otkazing)\b'
+            r'|sahifani|sahifasini|bolimni|bolimini|bulimni'
+            r'|откро|перейд|покажи страницу|\bopen\b|go to')
+        .hasMatch(t);
+  }
+
   /// Ovozli buyruq → sahifa yo'li (fuzzy, Whisper imlosiга chidamli). null = AI savol.
   String? _matchRoute(String text) {
     final t = text.toLowerCase().replaceAll(RegExp(r"['’ʻ`]"), '');
     bool has(List<String> keys) => keys.any((k) => t.contains(k));
-    // noqonuniy egallangan yerlar — aniq so'z + fuzzy undosh-skeleton (nakanuni/egellengen…)
+    // noqonuniy egallangan yerlar — aniq so'z + fuzzy undosh-skeleton (nakanuni/egellengen…).
+    // Skeletonlar SO'Z BOSHIga bog'langan (\b) — aks holda "belgilangan/olinganini" kabi
+    // oddiy so'zlar ham mos tushib, savolni /illegal sahifasiga uloqtirardi.
     if (has(['noqonun', 'qonunsiz', 'egallangan', 'egalangan', 'незаконн', 'illegal']) ||
-        RegExp(r'g[aeiou]*l+[aeiou]*n[aeiou]*g[aeiou]*n').hasMatch(t) ||
-        RegExp(r'n[aeiou]*[qkg][aeiou]*n[aeiou]*n').hasMatch(t)) {
+        RegExp(r'\b[ie]?g[ae]l+[aeiou]*n[aeiou]*g[aeiou]*n').hasMatch(t) ||
+        RegExp(r'\bn[aeiou]*[qkg][aeiou]*n[aeiou]*n').hasMatch(t)) {
       return '/illegal';
     }
     if (has(['hujjat', 'document', 'документ', 'spravka'])) return '/docs';
@@ -365,18 +398,17 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (text != null && text.trim().isNotEmpty) {
       state = state.copyWith(heard: text.trim());
       _logHeard(text.trim());
-      // tugma bilan ham: avval sahifa-navigatsiya (oldindan tayyor jadval), so'ng AI
+      // Tugma AI sahifasida — navigatsiya FAQAT aniq "och" buyrug'ida; aks holda AI javob beradi.
       final route = _matchRoute(text.trim());
-      if (route != null && navTo != null) {
+      if (route != null && navTo != null && _openCmd(text.trim())) {
         navTo!(route);
         await _speak(_navConfirm(route));
       } else {
         await askAI(text.trim());
       }
     } else {
-      final msg = {'uz': 'Eshitmadim, qaytadan urinib ko‘ring.', 'ru': 'Не расслышал, попробуйте снова.', 'en': 'I didn’t catch that, please try again.'}[_lang]!;
-      state = state.copyWith(answer: msg);
-      await _speak(msg);
+      // Tushunarsiz — avatar to'liq ekranda qoladi (karta chiqarilmaydi), faqat ovozda so'raydi
+      await _speak(_repeatPrompt());
     }
   }
 
@@ -385,16 +417,23 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     state = state.copyWith(phase: VoicePhase.thinking);
     String answer = '';
     List<List<dynamic>>? table;
+    bool persona = false;
     try {
       final r = await _dio.post('/ai/chat', data: {'q': q, 'lang': _lang});
       final m = Map<String, dynamic>.from(r.data as Map);
       answer = (m['text'] ?? '').toString();
+      persona = m['persona'] == true;
       if (m['table'] is List && (m['table'] as List).isNotEmpty) {
         table = (m['table'] as List).map((e) => (e as List).cast<dynamic>()).toList();
       }
     } catch (_) {}
     if (answer.trim().isEmpty) answer = _fallback();
-    state = state.copyWith(answer: answer, table: table);
+    if (persona) {
+      // AI o'ziga oid savol ("isming nima" ...) — ekranda FAQAT avatar qoladi (karta/jadval yo'q)
+      state = state.copyWith(answer: '', clearTable: true);
+    } else {
+      state = state.copyWith(answer: answer, table: table, clearTable: table == null);
+    }
     await _speak(answer);
   }
 
@@ -435,6 +474,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         'en': 'I am listening, ask your question.',
       }[_lang]!;
 
+  String _repeatPrompt() => {
+        'uz': 'Kechirasiz, tushunmadim. Qaytadan gapiring.',
+        'ru': 'Извините, я не понял. Повторите, пожалуйста.',
+        'en': 'Sorry, I did not understand. Please say it again.',
+      }[_lang]!;
+
   Future<void> _speak(String text) async {
     final clean = text.replaceAll(RegExp(r'<[^>]+>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
     if (clean.isEmpty) {
@@ -447,7 +492,13 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
     try {
       await _player.stop();
-      final done = _player.onPlayerComplete.first.timeout(const Duration(seconds: 30), onTimeout: () {});
+      // Timeout matn uzunligiga bog'liq (800 belgi ≈ 50-70s audio). Qisqa 30s edi:
+      // audio tugamay _busy=false bo'lib, mikrofon KAI'ning O'Z ovozini yozib olardi
+      // (o'z-o'ziga javob berish sikli). Timeout'da player ham TO'XTATILADI.
+      final capSec = 15 + (clean.length ~/ 10);
+      final done = _player.onPlayerComplete.first.timeout(Duration(seconds: capSec), onTimeout: () {
+        try { _player.stop(); } catch (_) {}
+      });
       await _player.play(UrlSource(url));
       await done;
     } catch (_) {}
