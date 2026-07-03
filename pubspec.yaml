@@ -1,7 +1,7 @@
 name: kadastr_kiosk
 description: "Davlat Kadastrlari Palatasi — Info Kiosk (Flutter Windows desktop)."
 publish_to: 'none'
-version: 1.8.3+19
+version: 1.8.4+20
 
 environment:
   sdk: '>=3.4.3 <4.0.0'

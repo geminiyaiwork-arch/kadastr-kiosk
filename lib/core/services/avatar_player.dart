@@ -40,9 +40,15 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
   static bool get supported =>
       Platform.isWindows || Platform.environment['KAI_LIVE_AVATAR'] == '1';
 
+  final Set<String> _reportedOnce = {};
+  void _reportOnce(String why) {
+    if (_reportedOnce.add(why)) _report('otkazildi: $why');
+  }
+
   Future<bool> speak(AvatarConfig? av, String text, String lang, {String voice = 'madina'}) async {
-    if (!supported) return false;
-    if (av == null || !av.enabled || av.type != 'video') return false;
+    if (!supported) { _reportOnce('gate-linux'); return false; }
+    if (av == null) { _reportOnce('konfig-null'); return false; }
+    if (!av.enabled || av.type != 'video') { _reportOnce('enabled=${av.enabled} type=${av.type}'); return false; }
     if (_busy) return false;
     _busy = true;
     File? clip;

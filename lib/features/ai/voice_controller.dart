@@ -487,7 +487,15 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       _busy = false;
       return;
     }
-    final avCfg = ref.read(avatarProvider).valueOrNull;
+    // POYGA-FIX: birinchi salomlashuvda avatar-konfig hali yuklanmagan bo'ladi
+    // (ikkalasi bir soniyada boshlanadi) -> null deb video o'tkazib yuborilardi.
+    // Qisqa kutamiz — konfig kelsa video, kelmasa oddiy ovoz.
+    var avCfg = ref.read(avatarProvider).valueOrNull;
+    if (avCfg == null) {
+      try {
+        avCfg = await ref.read(avatarProvider.future).timeout(const Duration(seconds: 4));
+      } catch (_) {}
+    }
     final voice = (avCfg?.male ?? false) ? 'sardor' : 'madina';
     // 1) JONLI AVATAR: gapirganda LAB-SINXRON video generatsiya qilinadi (ovoz ham ichida),
     //    jim turganda oddiy rasm. Muvaffaqiyatda oddiy TTS chalinmaydi (ikki ovoz bo'lmasin).
