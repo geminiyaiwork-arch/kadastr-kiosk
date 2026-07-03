@@ -84,15 +84,30 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
       }
       _idlePath = f.path;
       final p = _ensurePlayer();
-      await p.setPlaylistMode(PlaylistMode.loop);
       await p.setVolume(0);
+      await _mpvLoop(p, true);   // mpv'ning O'Z loop'i — video hech qachon "tugamaydi"
       await p.open(Media(f.path), play: true);
       state = state.copyWith(ready: true);
-    } catch (_) {
-      // yuklab bo'lmadi — UI rasm-fallbackда qoladi
+      // ignore: avoid_print
+      print('[avatar] idle video ochildi: ${f.path}');
+    } catch (e) {
+      // ignore: avoid_print
+      print('[avatar] ensureIdle xato: $e');
     } finally {
       _downloading = false;
     }
+  }
+
+  /// mpv'ning ichki loop'i (loop-file=inf): media_kit'ning playlist-restart yo'lini
+  /// CHETLAB o'tadi — Linux'da yangi libmpv bilan o'sha yo'l segfault berardi
+  /// (qulashlar doim video OXIRIDA edi). Native bo'lmasa jim o'tadi.
+  Future<void> _mpvLoop(Player p, bool on) async {
+    try {
+      final plat = p.platform;
+      // NativePlayer.setProperty — media_kit 1.x
+      // ignore: avoid_dynamic_calls
+      await (plat as dynamic).setProperty('loop-file', on ? 'inf' : 'no');
+    } catch (_) {}
   }
 
   /// LAB-SINXRON gapirish: /avatar/speak dan mp4 olib, ovozi bilan o'ynatadi.
@@ -113,7 +128,7 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
 
       final p = _ensurePlayer();
       state = state.copyWith(speaking: true);
-      await p.setPlaylistMode(PlaylistMode.none);
+      await _mpvLoop(p, false);   // klip BIR marta o'ynaydi
       await p.setVolume(100);
       final done = p.stream.completed.firstWhere((c) => c).timeout(
             Duration(seconds: 20 + text.length ~/ 8),
@@ -122,15 +137,17 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
       await p.open(Media(clip.path), play: true);
       await done;
       return true;
-    } catch (_) {
+    } catch (e) {
+      // ignore: avoid_print
+      print('[avatar] speak xato: $e');
       return false;
     } finally {
       state = state.copyWith(speaking: false);
-      // orqaga: bo'sh-holat loopi (ovozsiz)
+      // orqaga: bo'sh-holat loopi (ovozsiz, mpv-native loop)
       try {
         final p = _ensurePlayer();
-        await p.setPlaylistMode(PlaylistMode.loop);
         await p.setVolume(0);
+        await _mpvLoop(p, true);
         if (_idlePath != null) await p.open(Media(_idlePath!), play: true);
       } catch (_) {}
       try { clip?.deleteSync(); } catch (_) {}
