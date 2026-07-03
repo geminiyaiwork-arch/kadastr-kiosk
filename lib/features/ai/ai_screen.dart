@@ -70,11 +70,18 @@ class _AiScreenState extends ConsumerState<AiScreen> {
       color: T.aiDark,
       child: LayoutBuilder(builder: (context, c) {
         final w = c.maxWidth, h = c.maxHeight;
-        // Avatar: javob yo'q — TO'LIQ ekran; javob bor — yuqori-o'ng burchakda DUMALOQ.
+        // Avatar holatlari:
+        //  GAPIRAYOTGANDA (lab-sinx video) -> markazda KATTA (video yaqqol ko'rinadi)
+        //  javob bor (jim)                 -> yuqori-o'ng burchakda kichik DUMALOQ
+        //  javob yo'q (jim)                -> TO'LIQ ekran
         const corner = 210.0;
-        final rect = hasData
-            ? Rect.fromLTWH(w - corner - 30, 30, corner, corner)
-            : Rect.fromLTWH(0, 0, w, h);
+        final speakingVideo = ref.watch(avatarPlayerProvider).speaking;
+        final big = (w * 0.62).clamp(360.0, 640.0);
+        final rect = speakingVideo
+            ? Rect.fromLTWH((w - big) / 2, 40, big, big)
+            : hasData
+                ? Rect.fromLTWH(w - corner - 30, 30, corner, corner)
+                : Rect.fromLTWH(0, 0, w, h);
         return Stack(
           children: [
             // dumaloq/to'liq avatar — bitta widget, o'lchami-joyi ANIMATSIYA bilan o'zgaradi
@@ -91,8 +98,8 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: const Color(0xFF1E1E1E),
-                  borderRadius: BorderRadius.circular(hasData ? corner / 2 : 0),
-                  border: hasData ? Border.all(color: v.speaking ? T.blue : Colors.white24, width: 5) : null,
+                  borderRadius: BorderRadius.circular(speakingVideo ? 44 : (hasData ? corner / 2 : 0)),
+                  border: (hasData || speakingVideo) ? Border.all(color: v.speaking ? T.blue : Colors.white24, width: 5) : null,
                   boxShadow: v.speaking
                       ? [const BoxShadow(color: Color(0x732F6FE3), blurRadius: 46, spreadRadius: 6)]
                       : (hasData ? [const BoxShadow(color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8))] : null),
@@ -111,11 +118,12 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                 }),
               ),
             ),
-            // JAVOB maydoni — matn + jadval KATTA ekranda (pastdan suzib chiqadi)
+            // JAVOB maydoni — matn + jadval KATTA ekranda (pastdan suzib chiqadi).
+            // Video gapirayotganda javob katta-avatar OSTIDA ko'rinadi.
             Positioned(
-              top: 30,
+              top: speakingVideo ? 40 + big + 26 : 30,
               left: 36,
-              right: hasData ? corner + 76 : 36,
+              right: (hasData && !speakingVideo) ? corner + 76 : 36,
               bottom: 330,
               child: IgnorePointer(
                 ignoring: !hasData,

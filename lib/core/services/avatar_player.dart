@@ -70,10 +70,12 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
           );
       await p.open(Media(clip.path), play: true);
       await done;
+      _report('video ok (${bytes.length ~/ 1024}KB)');
       return true;
     } catch (e) {
       // ignore: avoid_print
       print('[avatar] speak xato: $e');
+      _report('xato: $e');
       return false;
     } finally {
       state = AvatarPlayerState(speaking: false, session: state.session + 1);
@@ -83,6 +85,15 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
       try { clip?.deleteSync(); } catch (_) {}
       _busy = false;
     }
+  }
+
+  /// Masofaviy diagnostika: Windows kioskda konsol yo'q — natija admin "AI log"ida
+  /// ko'rinadi (/ai/heard). Xatoga chidamli, javob kutilmaydi.
+  void _report(String msg) {
+    try {
+      _dio.post('/ai/heard', data: {'text': '[avatar] $msg', 'lang': 'uz', 'acted': false})
+          .then((_) {}, onError: (_) {});
+    } catch (_) {}
   }
 
   @override
