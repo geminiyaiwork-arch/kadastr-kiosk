@@ -31,6 +31,17 @@ jobs:
       - name: Build Windows (release)
         run: flutter build windows --release
 
+      # MSVCP140.dll xatosi (toza Windows'da VC++ runtime yo'q) — kerakli DLL'lar
+      # exe yoniga qo'shiladi, foydalanuvchi hech narsa o'rnatmaydi.
+      - name: Bundle VC++ runtime DLLs
+        shell: pwsh
+        run: |
+          $dst = "build/windows/x64/runner/Release"
+          foreach ($d in @('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll','msvcp140_1.dll','msvcp140_2.dll','msvcp140_atomic_wait.dll')) {
+            $src = "C:\Windows\System32\$d"
+            if (Test-Path $src) { Copy-Item $src $dst -Force; Write-Host "qo'shildi: $d" }
+          }
+
       - name: Zip release bundle (portable)
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath kadastr-kiosk-windows.zip
 

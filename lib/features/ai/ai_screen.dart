@@ -64,11 +64,6 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final avatar = ref.watch(avatarProvider).valueOrNull;
     final enabled = avatar?.enabled ?? false;
     final url = enabled ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}' : null;  // /api/v1 bilan (resolveMedia 404 berardi); video bo'lsa idle jpg
-    // JONLI avatar videosini tayyorlash — REAKTIV (konfig kechroq kelsa ham boshlanadi;
-    // ensureIdle ichida bir-marta-yuklash guardi bor, keshда saqlanadi)
-    if (avatar != null && enabled) {
-      ref.read(avatarPlayerProvider.notifier).ensureIdle(avatar);
-    }
     final hasData = v.answer.isNotEmpty;
 
     return Container(
@@ -103,11 +98,10 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                       : (hasData ? [const BoxShadow(color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8))] : null),
                 ),
                 child: Builder(builder: (context) {
-                  // JONLI avatar: video tayyor bo'lsa — media_kit Video (bo'shda loop:
-                  // kiprik/harakat; gapirganda lab-sinxron klip). Aks holda rasm-fallback.
-                  final apReady = ref.watch(avatarPlayerProvider).ready;
+                  // GAPIRGANDA — lab-sinxron VIDEO (Wav2Lip klip); JIM turganda — avatar RASMI.
+                  final ap = ref.watch(avatarPlayerProvider);
                   final vctl = ref.read(avatarPlayerProvider.notifier).controller;
-                  if (enabled && apReady && vctl != null) {
+                  if (enabled && ap.speaking && vctl != null) {
                     return Video(controller: vctl, controls: NoVideoControls, fit: BoxFit.cover);
                   }
                   return (enabled && url != null)

@@ -487,21 +487,20 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       _busy = false;
       return;
     }
-    final voice = (ref.read(avatarProvider).valueOrNull?.male ?? false) ? 'sardor' : 'madina';
-    // 1) JONLI AVATAR: video tayyor bo'lsa — LAB-SINXRON video (ovoz ham ichida).
-    //    Muvaffaqiyatda oddiy TTS chalinmaydi (ikki ovoz bo'lmasin).
+    final avCfg = ref.read(avatarProvider).valueOrNull;
+    final voice = (avCfg?.male ?? false) ? 'sardor' : 'madina';
+    // 1) JONLI AVATAR: gapirganda LAB-SINXRON video generatsiya qilinadi (ovoz ham ichida),
+    //    jim turganda oddiy rasm. Muvaffaqiyatda oddiy TTS chalinmaydi (ikki ovoz bo'lmasin).
     try {
       final ap = ref.read(avatarPlayerProvider.notifier);
-      if (ref.read(avatarPlayerProvider).ready) {
-        state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
-        final ok = await ap.speak(clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
-        if (ok) {
-          state = state.copyWith(speaking: false);
-          _busy = false;
-          return;
-        }
-        // video bo'lmadi — pastdagi oddiy TTS'ga tushamiz
+      state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
+      final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
+      if (ok) {
+        state = state.copyWith(speaking: false);
+        _busy = false;
+        return;
       }
+      // video bo'lmadi — pastdagi oddiy TTS'ga tushamiz
     } catch (_) {}
     final url = '${Env.apiBase}/tts/synthesize?text=${Uri.encodeComponent(clean.substring(0, min(clean.length, 800)))}'
         '&voice=$voice&lang=$_lang';
