@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/env.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/network/repository.dart';
+import '../../core/services/avatar_player.dart';
 import '../../core/theme/icons.dart';
 import '../../core/theme/tokens.dart';
 import '../../core/util/fmt.dart';
@@ -62,6 +64,11 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final avatar = ref.watch(avatarProvider).valueOrNull;
     final enabled = avatar?.enabled ?? false;
     final url = enabled ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}' : null;  // /api/v1 bilan (resolveMedia 404 berardi); video bo'lsa idle jpg
+    // JONLI avatar videosini tayyorlash — REAKTIV (konfig kechroq kelsa ham boshlanadi;
+    // ensureIdle ichida bir-marta-yuklash guardi bor, keshда saqlanadi)
+    if (avatar != null && enabled) {
+      ref.read(avatarPlayerProvider.notifier).ensureIdle(avatar);
+    }
     final hasData = v.answer.isNotEmpty;
 
     return Container(
@@ -95,10 +102,19 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                       ? [const BoxShadow(color: Color(0x732F6FE3), blurRadius: 46, spreadRadius: 6)]
                       : (hasData ? [const BoxShadow(color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8))] : null),
                 ),
-                child: (enabled && url != null)
-                    ? Image.network(url, fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white)))
-                    : Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white)),
+                child: Builder(builder: (context) {
+                  // JONLI avatar: video tayyor bo'lsa — media_kit Video (bo'shda loop:
+                  // kiprik/harakat; gapirganda lab-sinxron klip). Aks holda rasm-fallback.
+                  final apReady = ref.watch(avatarPlayerProvider).ready;
+                  final vctl = ref.read(avatarPlayerProvider.notifier).controller;
+                  if (enabled && apReady && vctl != null) {
+                    return Video(controller: vctl, controls: NoVideoControls, fit: BoxFit.cover);
+                  }
+                  return (enabled && url != null)
+                      ? Image.network(url, fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white)))
+                      : Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white));
+                }),
               ),
             ),
             // JAVOB maydoni — matn + jadval KATTA ekranda (pastdan suzib chiqadi)

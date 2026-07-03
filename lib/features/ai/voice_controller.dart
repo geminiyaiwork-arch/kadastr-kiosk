@@ -10,6 +10,7 @@ import 'package:record/record.dart';
 import '../../core/env.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/repository.dart';
+import '../../core/services/avatar_player.dart';
 
 enum VoicePhase { off, listening, transcribing, thinking, speaking }
 
@@ -487,6 +488,21 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       return;
     }
     final voice = (ref.read(avatarProvider).valueOrNull?.male ?? false) ? 'sardor' : 'madina';
+    // 1) JONLI AVATAR: video tayyor bo'lsa — LAB-SINXRON video (ovoz ham ichida).
+    //    Muvaffaqiyatda oddiy TTS chalinmaydi (ikki ovoz bo'lmasin).
+    try {
+      final ap = ref.read(avatarPlayerProvider.notifier);
+      if (ref.read(avatarPlayerProvider).ready) {
+        state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
+        final ok = await ap.speak(clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
+        if (ok) {
+          state = state.copyWith(speaking: false);
+          _busy = false;
+          return;
+        }
+        // video bo'lmadi — pastdagi oddiy TTS'ga tushamiz
+      }
+    } catch (_) {}
     final url = '${Env.apiBase}/tts/synthesize?text=${Uri.encodeComponent(clean.substring(0, min(clean.length, 800)))}'
         '&voice=$voice&lang=$_lang';
     // ignore: avoid_print
