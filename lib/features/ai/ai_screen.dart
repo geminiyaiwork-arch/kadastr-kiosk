@@ -72,6 +72,8 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final url = enabled
         ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}'
         : null; // /api/v1 bilan (resolveMedia 404 berardi); video bo'lsa idle jpg
+    // JIM-HOLAT imo-ishora videosi tayyorlansin (Windows; bir marta yuklanadi)
+    if (enabled) ref.read(avatarPlayerProvider.notifier).ensureIdle(avatar);
     final hasData = v.answer.isNotEmpty;
 
     return Container(
@@ -123,11 +125,17 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                             : null),
                   ),
                   child: Builder(builder: (context) {
-                    // GAPIRGANDA — lab-sinxron VIDEO (Wav2Lip klip); JIM turganda — avatar RASMI.
+                    // GAPIRGANDA — lab-sinxron VIDEO (Wav2Lip klip); JIM turganda —
+                    // IMO-ISHORA video-loop (kiprik/qo'l); u ham bo'lmasa — rasm.
                     final ap = ref.watch(avatarPlayerProvider);
-                    final vctl = ref.read(avatarPlayerProvider.notifier).controller;
+                    final notifier = ref.read(avatarPlayerProvider.notifier);
+                    final vctl = notifier.controller;
                     if (enabled && ap.speaking && vctl != null) {
                       return Video(controller: vctl, controls: NoVideoControls, fit: BoxFit.cover);
+                    }
+                    final ictl = notifier.idleController;
+                    if (enabled && ap.idleReady && ictl != null) {
+                      return Video(controller: ictl, controls: NoVideoControls, fit: BoxFit.cover);
                     }
                     return (enabled && url != null)
                         ? Image.network(url,

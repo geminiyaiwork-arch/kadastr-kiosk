@@ -18,8 +18,9 @@ import '../network/models.dart';
 /// Klip bo'lmasa/xato bo'lsa chaqiruvchi oddiy TTS'ga o'zi qaytadi.
 class AvatarPlayerState {
   final bool speaking; // hozir lab-sinx klip o'ynayapti (UI video ko'rsatadi)
+  final bool idleReady; // jim-holat video-loop tayyor (imo-ishora/kiprik)
   final int session; // controller almashganda UI yangilansin
-  const AvatarPlayerState({this.speaking = false, this.session = 0});
+  const AvatarPlayerState({this.speaking = false, this.idleReady = false, this.session = 0});
 }
 
 class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
@@ -28,9 +29,60 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
 
   Player? _player;
   VideoController? controller;
+  Player? _idlePlayer;
+  VideoController? idleController;
   bool _busy = false;
+  bool _idleBusy = false;
 
   Dio get _dio => ref.read(dioProvider);
+
+  /// Barqaror kesh papka (restartda 36MB video qayta yuklanmasin).
+  Directory _cacheDir() {
+    final home = Platform.environment['APPDATA'] ?? Platform.environment['HOME'] ?? Directory.systemTemp.path;
+    return Directory('$home/.kadastr_kiosk_cache');
+  }
+
+  /// JIM-HOLAT video-loop: avatar manba-videosi (imo-ishora, kiprik) aylanib turadi.
+  /// mpv'ning O'Z loop'i (loop-file=inf) — media_kit restart-yo'li chetlab o'tiladi.
+  Future<void> ensureIdle(AvatarConfig? av) async {
+    if (!supported || av == null || !av.enabled || av.type != 'video') return;
+    if (state.idleReady || _idleBusy) return;
+    _idleBusy = true;
+    try {
+      final dir = _cacheDir();
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      final f = File('${dir.path}/avatar_${av.ts}.mp4');
+      if (!f.existsSync() || f.lengthSync() < 100000) {
+        final r = await _dio.get<List<int>>('/avatar/file',
+            options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(minutes: 3)));
+        final bytes = r.data ?? const <int>[];
+        if (bytes.length < 100000) throw Exception('avatar video kichik');
+        final tmp = File('${f.path}.tmp');
+        await tmp.writeAsBytes(bytes, flush: true);
+        tmp.renameSync(f.path);
+        for (final e in dir.listSync()) {
+          if (e is File && e.path.contains('avatar_') && e.path != f.path) {
+            try { e.deleteSync(); } catch (_) {}
+          }
+        }
+      }
+      final p = Player();
+      _idlePlayer = p;
+      idleController = VideoController(p);
+      await p.setVolume(0);
+      try {
+        // ignore: avoid_dynamic_calls
+        await (p.platform as dynamic).setProperty('loop-file', 'inf');
+      } catch (_) {}
+      await p.open(Media(f.path), play: true);
+      state = AvatarPlayerState(speaking: state.speaking, idleReady: true, session: state.session + 1);
+      _report('idle-loop ok');
+    } catch (e) {
+      _report('idle xato: $e');
+    } finally {
+      _idleBusy = false;
+    }
+  }
 
   /// LAB-SINXRON gapirish: mp4 generatsiya -> yangi pleer -> o'ynatish -> yopish.
   /// Muvaffaqiyatda true (audio klip ichida — alohida TTS chalinmasin).
@@ -56,7 +108,7 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
     try {
       // speaking DARHOL yonadi (yuklashdan OLDIN) — UI avatar to'liq ekranda qoladi,
       // "javob-karta chiqib, keyin video, keyin yana karta" lipillashi bo'lmaydi
-      state = AvatarPlayerState(speaking: true, session: state.session + 1);
+      state = AvatarPlayerState(speaking: true, idleReady: state.idleReady, session: state.session + 1);
       final r = await _dio.get<List<int>>(
         '/avatar/speak',
         queryParameters: {'text': text, 'lang': lang, 'voice': voice},
@@ -70,7 +122,7 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
       p = Player();
       _player = p;
       controller = VideoController(p);
-      state = AvatarPlayerState(speaking: true, session: state.session + 1);
+      state = AvatarPlayerState(speaking: true, idleReady: state.idleReady, session: state.session + 1);
       await p.setVolume(100);
       // birinchi kadr chiqishiga oz vaqt — UI video'ga silliq almashadi
       final done = p.stream.completed.firstWhere((c) => c).timeout(
@@ -87,7 +139,7 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
       _report('xato: $e');
       return false;
     } finally {
-      state = AvatarPlayerState(speaking: false, session: state.session + 1);
+      state = AvatarPlayerState(speaking: false, idleReady: state.idleReady, session: state.session + 1);
       controller = null;
       try { await p?.dispose(); } catch (_) {}
       if (identical(_player, p)) _player = null;
@@ -108,6 +160,7 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
   @override
   void dispose() {
     try { _player?.dispose(); } catch (_) {}
+    try { _idlePlayer?.dispose(); } catch (_) {}
     super.dispose();
   }
 }
