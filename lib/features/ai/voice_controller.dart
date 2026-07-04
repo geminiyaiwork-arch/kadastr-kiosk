@@ -208,7 +208,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   // Qisqa oyna (≈3.6s) yozib, FAYL energiyasi (RMS) bo'yicha sukut/ovozни ajratadi —
   // sukut bo'lsa STTга yubormaydi, ovoz bo'lsa STT → wake-word ("Kai") tekshiradi.
   static const int _winMs = 3600;
-  static const double _rmsMinDbfs = -52.0; // shundan baland = gapirilgan
+  static const double _rmsMinDbfs = -44.0; // yaqin/aniq ovozgina o'tadi (xona shovqini kioskni band qilmasin)
   Future<String?> _capture() async {
     final path = '${Directory.systemTemp.path}/kadastr_utt.wav';
     try {
@@ -317,7 +317,6 @@ class VoiceController extends StateNotifier<VoiceUiState> {
 
   Future<void> _handle(String text) async {
     state = state.copyWith(heard: text);
-    _logHeard(text);
     final onAi = onAiPage?.call() ?? false;
     // HAMMA sahifada (AI sahifasida ham) faqat ISM bilan qabul qilinadi:
     // "Kadastr AI ..." / "KAI ..." — atrofdagi begona suhbat AI'ni ishga tushirmaydi.
@@ -332,9 +331,11 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       content = text; // "Kadastr AI"dan keyingi BIR martalik ismsiz javob
       _followUntil = DateTime.fromMillisecondsSinceEpoch(0); // qayta uzaymaydi
     } else {
-      _busy = false; // ism aytilmadi — e'tibor bermaymiz
+      _logHeard(text, acted: false); // eshitildi, lekin ism yo'q — E'TIBORSIZ
+      _busy = false;
       return;
     }
+    _logHeard(text, acted: true);
     ref.read(voiceActivityProvider.notifier).state++; // idle-taymerga "faollik" pulsi
     // 1) OVOZLI SAHIFA-NAVIGATSIYA — sahifaga JIM o'tadi (AI faqat AI sahifasida
     //    gapiradi — boshqa sahifalarda ovozli izoh YO'Q).
@@ -587,8 +588,8 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     _busy = false;
   }
 
-  void _logHeard(String text) {
-    _dio.post('/ai/heard', data: {'text': text, 'lang': _lang, 'acted': true}).then((_) {}, onError: (_) {});
+  void _logHeard(String text, {bool acted = true}) {
+    _dio.post('/ai/heard', data: {'text': text, 'lang': _lang, 'acted': acted}).then((_) {}, onError: (_) {});
   }
 
   @override

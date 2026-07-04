@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../core/env.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -51,6 +53,16 @@ class HomeScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 38),
           _StatsPanel(title: t['statsTitle'], labels: stats.cast<String>(), values: values),
+          // VERSIYA yorlig'i — kichkina, xira (qaysi versiya turganini bilish uchun)
+          const SizedBox(height: 10),
+          const Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: EdgeInsets.only(right: 6),
+              child: Text('v${Env.appVersion}',
+                  style: TextStyle(fontSize: 16, color: Color(0x59FFFFFF), fontWeight: FontWeight.w600)),
+            ),
+          ),
         ],
       ),
     );
