@@ -21,7 +21,7 @@ Version: $VER
 Section: utils
 Priority: optional
 Architecture: amd64
-Depends: libgtk-3-0, libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, libpulse0, libstdc++6, libmpv2 | libmpv1
+Depends: libgtk-3-0, libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, libpulse0, libstdc++6, libmpv2 | libmpv1, mpv
 Maintainer: Kadastr Agentligi <info@andkadastrai.uz>
 Description: Davlat Kadastrlari Palatasi — Kiosk
  AI yordamchi, ovozli boshqaruv (wake-word + telefon QR pult), murojaat, xizmatlar.

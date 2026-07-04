@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -112,8 +113,39 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
     _tryVideo();
   }
 
+  Process? _mpv;
+
+  /// LINUX: video-zastavka Flutter ICHIDA emas — MUSTAQIL mpv-oynada (to'liq ekran).
+  /// Sabab: bu mashinalarda Mesa-gallium Flutter GL-teksturasida segfault beradi
+  /// (26.0.8 ham, 26.1.2 ham — coredump'lar bilan tasdiqlangan). Tashqi mpv oynasi
+  /// o'z renderida ishlaydi — ilova umuman xavf ostida emas. Ekranga tegilsa yopiladi.
+  Future<void> _startMpvLinux() async {
+    final conf = File('${Directory.systemTemp.path}/kai_mpv_input.conf');
+    await conf.writeAsString('MBTN_LEFT quit\nMOUSE_BTN0 quit\nENTER quit\nESC quit\n');
+    final args = <String>[
+      '--fs', '--no-osc', '--really-quiet', '--loop-playlist=inf',
+      '--no-input-default-bindings', '--input-conf=${conf.path}', ..._urls,
+    ];
+    _mpv = await Process.start('mpv', args);
+    _mpv!.exitCode.then((_) {
+      _mpv = null;
+      if (mounted) widget.onTouch(); // videoga tegildi -> zastavka ham yopiladi
+    });
+  }
+
   Future<void> _tryVideo() async {
-    if (!AvatarPlayer.supported) return; // Linux (buzuq Mesa) — gradient/logo qoladi
+    try {
+      if (!AvatarPlayer.supported) {
+        if (!Platform.isLinux) return;
+        // Linux: ro'yxatni olib, tashqi mpv bilan ko'rsatamiz
+        _urls = await ref.refresh(screensaverProvider.future).timeout(const Duration(seconds: 6));
+        if (_urls.isEmpty || !mounted) return;
+        await _startMpvLinux();
+        return;
+      }
+    } catch (_) {
+      return; // mpv yo'q/xato — gradient-logo qoladi
+    }
     try {
       // refresh: birinchi urinishda tarmoq bo'lmasa bo'sh ro'yxat KESHLANIB
       // qolmasin; admin yangi video qo'shsa restart'siz yetib kelsin
@@ -202,6 +234,7 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
 
   @override
   void dispose() {
+    try { _mpv?.kill(); } catch (_) {}
     _c.dispose();
     _fxA.dispose();
     _doneSub?.cancel();

@@ -76,8 +76,9 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     if (enabled) ref.read(avatarPlayerProvider.notifier).ensureIdle(avatar);
     final hasData = v.answer.isNotEmpty;
 
-    return Container(
-      color: T.aiDark,
+    return AnimatedContainer(
+      duration: _fx,
+      color: hasData ? const Color(0xFFEFF1FA) : T.aiDark, // javobda OCH fon (mockup)
       child: LayoutBuilder(builder: (context, c) {
         final w = c.maxWidth, h = c.maxHeight;
         // Avatar holatlari:
@@ -110,14 +111,17 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                 turns: _spins.toDouble(),
                 duration: _fx,
                 curve: _fxCurve,
-                child: AnimatedContainer(
+                child: Stack(clipBehavior: Clip.none, children: [
+                  AnimatedContainer(
                   duration: _fx,
                   curve: _fxCurve,
                   clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
                     color: const Color(0xFF1E1E1E),
                     borderRadius: BorderRadius.circular(hasData ? corner / 2 : 0),
-                    border: hasData ? Border.all(color: v.speaking ? T.blue : Colors.white24, width: 5) : null,
+                    border: hasData
+                        ? Border.all(color: v.speaking ? const Color(0xFF5457F5) : Colors.white, width: 5)
+                        : null,
                     boxShadow: v.speaking
                         ? [const BoxShadow(color: Color(0x732F6FE3), blurRadius: 46, spreadRadius: 6)]
                         : (hasData
@@ -144,7 +148,22 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                                 Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white)))
                         : Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white));
                   }),
-                ),
+                  ),
+                  if (hasData)
+                    Positioned(
+                      right: 10,
+                      bottom: 10,
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF22C55E),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 4),
+                        ),
+                      ),
+                    ),
+                ]),
               ),
             ),
             // JAVOB maydoni — matn + jadval KATTA ekranda. Video gapirayotganda
@@ -202,10 +221,10 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                     height: v.recording ? 172 : 150,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: v.recording ? const Color(0xFFE5484D) : T.blue,
+                      color: v.recording ? const Color(0xFFE5484D) : const Color(0xFF5457F5),
                       boxShadow: [
                         BoxShadow(
-                          color: v.recording ? const Color(0x66E5484D) : const Color(0x662F6FE3),
+                          color: v.recording ? const Color(0x66E5484D) : const Color(0x4D5457F5),
                           blurRadius: 42,
                           spreadRadius: v.recording ? 14 : 4,
                         ),
@@ -243,45 +262,94 @@ class _AiScreenState extends ConsumerState<AiScreen> {
   }
 }
 
-/// Javob: matn karta + (bo'lsa) KATTA jadval — uzun bo'lsa ichida aylanadi (scroll).
+/// MOCKUP uslubidagi javob: yaltiroq-belgi + raqamlari INDIGO-BOLD matn-karta,
+/// har qatori RANGLI IKONKA-BELGILI jadval (Nomi | Soni), yumaloq oq kartalar.
 class _AnswerView extends StatelessWidget {
   const _AnswerView({required this.text, required this.table});
   final String text;
   final List<List<dynamic>>? table;
 
+  static const _ink = Color(0xFF232A4D);
+  static const _indigo = Color(0xFF5457F5);
+
   String _cell(dynamic v) {
     final s = '$v';
-    final n = num.tryParse(s.replaceAll(RegExp(r'[\s ]'), ''));
-    return n != null ? fmt(n) : s; // raqam -> 1 812 ko'rinishida; matn ("250 000 so'm") o'z holicha
+    final n = num.tryParse(s.replaceAll(RegExp(r'[\s\u00A0]'), ''));
+    return n != null ? fmt(n) : s;
+  }
+
+  /// Matndagi RAQAMLAR indigo-bold bo'lib ajraladi (mockupdagidek).
+  List<TextSpan> _rich(String t, double fs) {
+    final base = TextStyle(fontSize: fs, fontWeight: FontWeight.w600, color: _ink, height: 1.45);
+    final numS = TextStyle(fontSize: fs, fontWeight: FontWeight.w800, color: _indigo, height: 1.45);
+    final out = <TextSpan>[];
+    final re = RegExp(r'\d[\d\s\u00A0]*\d|\d');
+    var last = 0;
+    for (final m in re.allMatches(t)) {
+      if (m.start > last) out.add(TextSpan(text: t.substring(last, m.start), style: base));
+      out.add(TextSpan(text: m.group(0), style: numS));
+      last = m.end;
+    }
+    if (last < t.length) out.add(TextSpan(text: t.substring(last), style: base));
+    return out;
+  }
+
+  /// Qator uchun mavzuga mos ikonka + rang (mockup: odamlar/uy/pin/bino).
+  (IconData, Color, Color) _badge(String label, int i) {
+    final l = label.toLowerCase();
+    if (l.contains('tuman') || l.contains('shahar') || l.contains('mahalla') || l.contains('aholi')) {
+      return (Icons.groups_rounded, const Color(0xFFEDE7FE), const Color(0xFF7C5CFC));
+    }
+    if (l.contains('mulk') || l.contains('uy') || l.contains('xonadon')) {
+      return (Icons.home_rounded, const Color(0xFFE3F0FE), const Color(0xFF2E90FA));
+    }
+    if (l.contains('yer') || l.contains('uchastka') || l.contains('maydon')) {
+      return (Icons.location_on_rounded, const Color(0xFFE2F8EC), const Color(0xFF16B364));
+    }
+    if (l.contains('xatlov') || l.contains('obyekt') || l.contains('bino') || l.contains('ariza')) {
+      return (Icons.apartment_rounded, const Color(0xFFFEF0E1), const Color(0xFFF79009));
+    }
+    const cyc = [
+      (Icons.groups_rounded, Color(0xFFEDE7FE), Color(0xFF7C5CFC)),
+      (Icons.home_rounded, Color(0xFFE3F0FE), Color(0xFF2E90FA)),
+      (Icons.location_on_rounded, Color(0xFFE2F8EC), Color(0xFF16B364)),
+      (Icons.apartment_rounded, Color(0xFFFEF0E1), Color(0xFFF79009)),
+    ];
+    return cyc[i % cyc.length];
   }
 
   @override
   Widget build(BuildContext context) {
     final rows = table ?? const <List<dynamic>>[];
     final hasTable = rows.isNotEmpty;
-    // Ba'zi javoblar jadvalni SARLAVHASIZ yuboradi (masalan noqonuniy-yerlar ro'yxati).
-    // Sarlavha deb faqat 2-katagi RAQAM BO'LMAGAN birinchi qator olinadi ("Nomi|Soni").
     final headed =
-        rows.isNotEmpty && rows[0].length > 1 && num.tryParse('${rows[0][1]}'.replaceAll(RegExp(r'[\s ]'), '')) == null;
+        rows.isNotEmpty && rows[0].length > 1 && num.tryParse('${rows[0][1]}'.replaceAll(RegExp(r'[\s\u00A0]'), '')) == null;
+    final fs = text.length > 220 ? 27.0 : 31.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Matnli javob (ovozda o'qiladigan gap)
+        // MATN-KARTA: yaltiroq-belgi + raqamlari ajratilgan matn
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 28),
+          padding: const EdgeInsets.all(26),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(26),
-            boxShadow: const [BoxShadow(color: Color(0x2410266B), offset: Offset(0, 10), blurRadius: 34)],
+            color: const Color(0xFFE9EAFB),
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: const [BoxShadow(color: Color(0x1A29306B), offset: Offset(0, 8), blurRadius: 26)],
           ),
-          child: Text(text,
-              style: TextStyle(
-                fontSize: text.length > 220 ? 28 : 33,
-                fontWeight: FontWeight.w600,
-                color: T.navy,
-                height: 1.42,
-              )),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(color: const Color(0xFFDCDDFB), borderRadius: BorderRadius.circular(18)),
+                child: const Icon(Icons.auto_awesome, color: _indigo, size: 34),
+              ),
+              const SizedBox(width: 22),
+              Expanded(child: RichText(text: TextSpan(children: _rich(text, fs)))),
+            ],
+          ),
         ),
         if (hasTable) ...[
           const SizedBox(height: 22),
@@ -290,47 +358,54 @@ class _AnswerView extends StatelessWidget {
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(26),
-                boxShadow: const [BoxShadow(color: Color(0x2410266B), offset: Offset(0, 10), blurRadius: 34)],
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: const [BoxShadow(color: Color(0x1A29306B), offset: Offset(0, 8), blurRadius: 26)],
               ),
               child: SingleChildScrollView(
                 child: Column(
                   children: [
-                    // sarlavha qatori (faqat haqiqiy sarlavha bo'lsa)
-                    if (headed)
-                      Container(
-                        color: const Color(0xFFF2F5FC),
-                        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 26),
-                        child: Row(
-                          children: [
-                            Expanded(
-                                child: Text('${rows[0].isNotEmpty ? rows[0][0] : ''}',
-                                    style: const TextStyle(fontSize: 27, fontWeight: FontWeight.w800, color: T.navy))),
-                            Text(rows[0].length > 1 ? '${rows[0][1]}' : '',
-                                style: const TextStyle(fontSize: 27, fontWeight: FontWeight.w800, color: T.navy)),
-                          ],
-                        ),
+                    Container(
+                      color: const Color(0xFFE4E6F9),
+                      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 30),
+                      child: Row(
+                        children: [
+                          Expanded(
+                              child: Text(headed ? '${rows[0][0]}' : 'Nomi',
+                                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _ink))),
+                          Text(headed && rows[0].length > 1 ? '${rows[0][1]}' : 'Soni',
+                              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _ink)),
+                        ],
                       ),
+                    ),
                     for (var i = headed ? 1 : 0; i < rows.length; i++)
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 17, horizontal: 26),
-                        decoration: BoxDecoration(
-                          color: i.isEven ? const Color(0xFFFAFBFE) : Colors.white,
-                          border: const Border(top: BorderSide(color: T.line)),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                                child: Text('${rows[i].isNotEmpty ? rows[i][0] : ''}',
-                                    style: const TextStyle(fontSize: 29, color: T.muted))),
-                            const SizedBox(width: 16),
-                            Flexible(
-                                child: Text(rows[i].length > 1 ? _cell(rows[i][1]) : '',
-                                    textAlign: TextAlign.right,
-                                    style: const TextStyle(fontSize: 29, fontWeight: FontWeight.w800, color: T.navy))),
-                          ],
-                        ),
-                      ),
+                      Builder(builder: (context) {
+                        final label = '${rows[i].isNotEmpty ? rows[i][0] : ''}';
+                        final b = _badge(label, i);
+                        return Container(
+                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 26),
+                          decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFEDEFF9)))),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 60,
+                                height: 60,
+                                decoration: BoxDecoration(color: b.$2, borderRadius: BorderRadius.circular(16)),
+                                child: Icon(b.$1, color: b.$3, size: 32),
+                              ),
+                              const SizedBox(width: 22),
+                              Expanded(
+                                  child: Text(label,
+                                      style: const TextStyle(fontSize: 29, fontWeight: FontWeight.w600, color: _ink))),
+                              const SizedBox(width: 16),
+                              Flexible(
+                                  child: Text(rows[i].length > 1 ? _cell(rows[i][1]) : '',
+                                      textAlign: TextAlign.right,
+                                      style:
+                                          const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: _indigo))),
+                            ],
+                          ),
+                        );
+                      }),
                   ],
                 ),
               ),
