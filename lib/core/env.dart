@@ -2,6 +2,7 @@
 class Env {
   static const apiBase = 'https://api.andkadastrai.uz/api/v1';
   static const apiOrigin = 'https://api.andkadastrai.uz';
+  static const portalOrigin = 'https://andkadastrai.uz'; // screensaver video shu yerdan
   static const kioskId = 1;
 
   // Fixed design canvas (portrait), uniform-scaled + letterboxed.
@@ -14,7 +15,7 @@ class Env {
   static const heartbeatMs = 60000;
 
   // App version (reported via heartbeat; keep in sync with pubspec).
-  static const appVersion = '1.8.4';
+  static const appVersion = '1.8.5';
 
   // Voice timing + native VAD (dBFS amplitude from `record`; tune on Windows mic)
   static const onsetDb = -38.0; // above this = speech onset

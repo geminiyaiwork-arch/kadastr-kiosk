@@ -275,6 +275,11 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         return;
       }
       content = cmd;
+    } else {
+      // AI sahifasida ham "Kadastr AI assalomu alaykum" desa — ISM tashlanadi,
+      // faqat gapning o'zi qabul qilinadi ("assalomu alaykum").
+      final cmd = _stripWake(text);
+      if (cmd != null && cmd.isNotEmpty) content = cmd;
     }
     // 1) OVOZLI SAHIFA-NAVIGATSIYA — oldindan tayyor sahifaга o'tadi (jadval shu yerда,
     //    STT aniqligига bog'liq emas). Masalan "noqonuniy yerlar" → /illegal.

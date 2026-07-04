@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../env.dart';
 import 'api_client.dart';
 import 'models.dart';
 
@@ -61,6 +62,21 @@ final avatarProvider = FutureProvider<AvatarConfig>((ref) async {
     return AvatarConfig.fromJson(Map<String, dynamic>.from(r.data as Map));
   } catch (_) {
     return const AvatarConfig();
+  }
+});
+
+/// Admin yuklagan ZASTAVKA videolari (kutish ekranida to'liq ekran o'ynaydi).
+/// URL nisbiy keladi ("/screensaver/x.mp4") — portal domeniga to'ldiriladi.
+final screensaverProvider = FutureProvider<List<String>>((ref) async {
+  try {
+    final r = await ref.read(dioProvider).get('/screensaver');
+    return (r.data as List? ?? [])
+        .map((e) => '${(e as Map)['url'] ?? ''}')
+        .where((u) => u.isNotEmpty)
+        .map((u) => u.startsWith('http') ? u : '${Env.portalOrigin}$u')
+        .toList();
+  } catch (_) {
+    return const <String>[];
   }
 });
 
