@@ -111,7 +111,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                 turns: _spins.toDouble(),
                 duration: _fx,
                 curve: _fxCurve,
-                child: Stack(clipBehavior: Clip.none, children: [
+                child: Stack(fit: StackFit.expand, clipBehavior: Clip.none, children: [
                   AnimatedContainer(
                   duration: _fx,
                   curve: _fxCurve,
