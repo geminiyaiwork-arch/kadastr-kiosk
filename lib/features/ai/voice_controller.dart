@@ -92,7 +92,7 @@ const _wakeSet = {
 
 /// Fuzzy wake match — Whisper "Kai"ни turlicha yozadi (qey/kay/gey…): k/q/g + unli(+y/i).
 final _wakeRe = RegExp(r'^[kqg][aeiouyаеёиоуэыюяй]{1,2}[yiй]?$');
-bool _wakeFuzzy(String w) => w.length >= 2 && w.length <= 4 && _wakeRe.hasMatch(w);
+bool _wakeFuzzy(String w) => w.length >= 3 && w.length <= 4 && _wakeRe.hasMatch(w); // 2-harfli ('ku','qa') ism EMAS
 
 /// Single always-on voice engine: mic → VAD → /stt → wake-route → /ai/chat → TTS.
 /// Runs globally; on the AI page the wake word is optional.
@@ -192,7 +192,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         await _handle(text);
       } else if ((onAiPage?.call() ?? false) &&
           text != null &&
-          text.trim().length >= 2 &&
+          _stripWake(text) != null &&
           DateTime.now().difference(_lastRepeat).inSeconds >= 20) {
         // AI sahifasida TUSHUNARSIZ gap — qaytadan so'raymiz (20s cooldown:
         // fon shovqinida har 3.6s "tushunmadim" spam bo'lmasin)
@@ -329,7 +329,8 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (cmd != null) {
       content = cmd;
     } else if (onAi && DateTime.now().isBefore(_followUntil)) {
-      content = text; // suhbat davomida ismsiz davom etish
+      content = text; // "Kadastr AI"dan keyingi BIR martalik ismsiz javob
+      _followUntil = DateTime.fromMillisecondsSinceEpoch(0); // qayta uzaymaydi
     } else {
       _busy = false; // ism aytilmadi — e'tibor bermaymiz
       return;
@@ -352,6 +353,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (content.trim().length >= 2) {
       await askAI(content);
     } else {
+      // "Kadastr AI" (yolg'iz ism) — "Eshitaman..." deymiz va KEYINGI gap
+      // 15 soniya ichida ISMSIZ qabul qilinadi (bir martalik)
+      _followUntil = DateTime.now().add(const Duration(seconds: 15));
       await _speak(_prompt());
     }
   }
@@ -551,7 +555,6 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
       if (ok) {
         state = state.copyWith(speaking: false);
-        _followUntil = DateTime.now().add(const Duration(seconds: 25)); // suhbat oynasi
         _busy = false;
         return;
       }
@@ -581,7 +584,6 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       print('[tts] play xato: $e');
     }
     state = state.copyWith(speaking: false);
-    _followUntil = DateTime.now().add(const Duration(seconds: 25)); // suhbat oynasi
     _busy = false;
   }
 
