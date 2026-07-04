@@ -1,9 +1,9 @@
 ; Inno Setup script — single-file installer for the Kadastr Kiosk (Windows)
 [Setup]
 AppName=Kadastr Kiosk
-AppVersion=1.8.8
+AppVersion=1.8.15
 AppPublisher=Andijon viloyati kadastr palatasi
-DefaultDirName={autopf}\KadastrKiosk
+DefaultDirName={localappdata}\KadastrKiosk
 DefaultGroupName=Kadastr Kiosk
 DisableProgramGroupPage=yes
 OutputDir=..\installer_out
@@ -12,7 +12,7 @@ Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 WizardStyle=modern
 ; Avto-yangilanish: ishlab turgan kioskни yopadi, yangilaydi (SOKIN rejim)
 CloseApplications=yes
@@ -30,10 +30,10 @@ Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: recurs
 
 [Icons]
 Name: "{group}\Kadastr Kiosk"; Filename: "{app}\kadastr_kiosk.exe"
-Name: "{commondesktop}\Kadastr Kiosk"; Filename: "{app}\kadastr_kiosk.exe"; Tasks: desktopicon
+Name: "{userdesktop}\Kadastr Kiosk"; Filename: "{app}\kadastr_kiosk.exe"; Tasks: desktopicon
 
 [Registry]
-Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "KadastrKiosk"; ValueData: """{app}\kadastr_kiosk.exe"""; Flags: uninsdeletevalue; Tasks: autostart
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "KadastrKiosk"; ValueData: """{app}\kadastr_kiosk.exe"""; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
 Filename: "{app}\kadastr_kiosk.exe"; Description: "Hozir ishga tushirish"; Flags: nowait postinstall
