@@ -18,18 +18,20 @@ class UpdateService {
   static bool _busy = false, _prompting = false;
 
   static Future<void> check() async {
-    if (!Platform.isWindows || _busy || _prompting) return;
-    String latest = '', exe = '';
+    if ((!Platform.isWindows && !Platform.isLinux) || _busy || _prompting) return;
+    String latest = '', exe = '', deb = '';
     try {
       final dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 8), receiveTimeout: const Duration(seconds: 8)));
       final r = await dio.get(_kUpdateUrl);
       final m = Map<String, dynamic>.from(r.data is Map ? r.data : (r.data is String ? {} : {}));
       latest = (m['version'] ?? '').toString().trim();
       exe = (m['exe'] ?? '').toString().trim();
+      deb = (m['deb'] ?? '').toString().trim();
     } catch (_) {
       return;
     }
-    if (latest.isEmpty || exe.isEmpty || !_newer(latest, Env.appVersion)) return;
+    final pkgUrl = Platform.isWindows ? exe : deb;
+    if (latest.isEmpty || pkgUrl.isEmpty || !_newer(latest, Env.appVersion)) return;
     final ctx = rootNavigatorKey.currentContext;
     if (ctx == null || !ctx.mounted) return;
     _prompting = true;
@@ -47,7 +49,7 @@ class UpdateService {
       ),
     );
     _prompting = false;
-    if (ok == true) await _install(exe, latest);
+    if (ok == true) await _install(Platform.isWindows ? exe : deb, latest);
   }
 
   /// a > b (X.Y.Z semver taqqoslash)
@@ -61,7 +63,7 @@ class UpdateService {
     return false;
   }
 
-  static Future<void> _install(String exeUrl, String v) async {
+  static Future<void> _install(String pkgUrl, String v) async {
     _busy = true;
     final ctx = rootNavigatorKey.currentContext;
     if (ctx != null && ctx.mounted) {
@@ -81,23 +83,47 @@ class UpdateService {
       );
     }
     try {
-      final tmp = '${Directory.systemTemp.path}\\kadastr-kiosk-setup-$v.exe';
-      await Dio().download(exeUrl, tmp, options: Options(receiveTimeout: const Duration(minutes: 15)));
-      // MUHIM: UAC (ruxsat) oynasi TO'LIQ-EKRAN kiosk ORQASIDA qolib, yangilanish
-      // hech qachon boshlanmasdi! O'rnatishdan oldin kiosk kichrayadi — UAC ko'rinadi.
-      try {
-        await windowManager.setAlwaysOnTop(false);
-        await windowManager.setFullScreen(false);
-        await windowManager.minimize();
-      } catch (_) {}
-      // /SILENT: kichik jarayon-oynasi ko'rinadi; [Run] postinstall kioskни QAYTA ochadi.
-      await Process.start(tmp, ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'], mode: ProcessStartMode.detached);
-      await Future.delayed(const Duration(seconds: 1));
-      exit(0); // dastur o'zini yopadi — o'rnatgich davom etadi
+      if (Platform.isWindows) {
+        final tmp = '${Directory.systemTemp.path}\\kadastr-kiosk-setup-$v.exe';
+        await Dio().download(pkgUrl, tmp, options: Options(receiveTimeout: const Duration(minutes: 15)));
+        // MUHIM: UAC (ruxsat) oynasi TO'LIQ-EKRAN kiosk ORQASIDA qolib, yangilanish
+        // hech qachon boshlanmasdi! O'rnatishdan oldin kiosk kichrayadi — UAC ko'rinadi.
+        try {
+          await windowManager.setAlwaysOnTop(false);
+          await windowManager.setFullScreen(false);
+          await windowManager.minimize();
+        } catch (_) {}
+        // /SILENT: kichik jarayon-oynasi ko'rinadi; [Run] postinstall kioskни QAYTA ochadi.
+        await Process.start(tmp, ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'],
+            mode: ProcessStartMode.detached);
+        await Future.delayed(const Duration(seconds: 1));
+        exit(0); // dastur o'zini yopadi — o'rnatgich davom etadi
+      } else {
+        // LINUX: deb'ни yuklab, pkexec (grafik parol-oyna) bilan o'rnatamiz,
+        // so'ng yangi versiyani ishga tushirib, o'zimizni yopamiz.
+        final tmp = '${Directory.systemTemp.path}/kadastr-kiosk-$v.deb';
+        await Dio().download(pkgUrl, tmp, options: Options(receiveTimeout: const Duration(minutes: 15)));
+        try {
+          await windowManager.setAlwaysOnTop(false);
+          await windowManager.setFullScreen(false);
+          await windowManager.minimize();
+        } catch (_) {}
+        final r = await Process.run('pkexec', ['dpkg', '-i', tmp]);
+        if (r.exitCode == 0) {
+          await Process.start('/usr/bin/kadastr-kiosk', [], mode: ProcessStartMode.detached);
+          await Future.delayed(const Duration(milliseconds: 500));
+          exit(0);
+        }
+        throw Exception('dpkg ${r.exitCode}');
+      }
     } catch (_) {
       _busy = false;
       final c = rootNavigatorKey.currentContext;
       if (c != null && c.mounted) Navigator.of(c, rootNavigator: true).maybePop();
+      try {
+        await windowManager.setFullScreen(true);
+        await windowManager.setAlwaysOnTop(true);
+      } catch (_) {}
     }
   }
 }

@@ -138,9 +138,17 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
 
   void _watchEnd(Player p) {
     _doneSub?.cancel();
-    if (_urls.length < 2) return;
-    _doneSub = p.stream.completed.listen((done) {
-      if (done) _advance();
+    _doneSub = p.stream.completed.listen((done) async {
+      if (!done) return;
+      if (_urls.length >= 2) {
+        _advance();
+      } else {
+        // yakka video: PlaylistMode.loop ba'zi holatda ishlamasa — boshidan qayta
+        try {
+          await p.seek(Duration.zero);
+          await p.play();
+        } catch (_) {}
+      }
     });
   }
 
@@ -219,13 +227,13 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (_videoReady && _curC != null) Video(controller: _curC!, controls: NoVideoControls, fit: BoxFit.cover),
+            if (_videoReady && _curC != null) Video(controller: _curC!, controls: NoVideoControls, fit: BoxFit.contain),
             // KIRUVCHI video — 10 xil animatsiyadan tasodifiysi bilan
             if (_nextC != null)
               _TransitionFx(
                 kind: _fxKind,
                 anim: _fxA,
-                child: Video(controller: _nextC!, controls: NoVideoControls, fit: BoxFit.cover),
+                child: Video(controller: _nextC!, controls: NoVideoControls, fit: BoxFit.contain),
               ),
             if (!_videoReady)
               Column(

@@ -84,11 +84,13 @@ class _AiScreenState extends ConsumerState<AiScreen> {
         //  javob bor (jim)                 -> yuqori-o'ng burchakda kichik DUMALOQ
         //  javob yo'q (jim)                -> TO'LIQ ekran (rasm)
         const corner = 210.0;
-        final speakingVideo = ref.watch(avatarPlayerProvider).speaking;
-        final rect = (speakingVideo || !hasData)
-            ? Rect.fromLTWH(0, 0, w, h)
-            : Rect.fromLTWH(w - corner - 30, 30, corner, corner);
-        final cornerNow = hasData && !speakingVideo;
+        ref.watch(avatarPlayerProvider); // video boshlanganda rebuild (Builder controllerni oladi)
+        // MA'LUMOTLI javob -> avatar BURCHAKDA (gapirayotganda ham — video doirada),
+        // javob ekranda ko'rinib turadi. Ma'lumotsiz (salomlashuv/persona) -> TO'LIQ ekran.
+        final rect = hasData
+            ? Rect.fromLTWH(w - corner - 30, 30, corner, corner)
+            : Rect.fromLTWH(0, 0, w, h);
+        final cornerNow = hasData;
         if (cornerNow && !_wasCorner) _spins++; // burchakka chiqishda bir tur oldinga
         _wasCorner = cornerNow;
         return Stack(
@@ -112,10 +114,8 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                   clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
                     color: const Color(0xFF1E1E1E),
-                    borderRadius: BorderRadius.circular((hasData && !speakingVideo) ? corner / 2 : 0),
-                    border: (hasData && !speakingVideo)
-                        ? Border.all(color: v.speaking ? T.blue : Colors.white24, width: 5)
-                        : null,
+                    borderRadius: BorderRadius.circular(hasData ? corner / 2 : 0),
+                    border: hasData ? Border.all(color: v.speaking ? T.blue : Colors.white24, width: 5) : null,
                     boxShadow: v.speaking
                         ? [const BoxShadow(color: Color(0x732F6FE3), blurRadius: 46, spreadRadius: 6)]
                         : (hasData
@@ -147,11 +147,11 @@ class _AiScreenState extends ConsumerState<AiScreen> {
               right: hasData ? corner + 76 : 36,
               bottom: 330,
               child: IgnorePointer(
-                ignoring: !hasData || speakingVideo,
+                ignoring: !hasData,
                 child: AnimatedOpacity(
                   duration: _fx,
                   curve: _fxCurve,
-                  opacity: (hasData && !speakingVideo) ? 1 : 0,
+                  opacity: hasData ? 1 : 0,
                   child: AnimatedSlide(
                     duration: _fx,
                     curve: _fxCurve,

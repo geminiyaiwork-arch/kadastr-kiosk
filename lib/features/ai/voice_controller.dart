@@ -56,8 +56,9 @@ class VoiceUiState {
 
 /// Wake-word variants for "KAI" (= Kadastr AI), incl. Whisper mis-hearings.
 const _wakeSet = {
-  'kai', 'kayi', 'kay', 'kei', 'key', 'kaye', 'kayy', 'kayu', 'qai', 'qei', 'qey',
-  'кай', 'кей', 'кэй', 'кайи',
+  'kai', 'kayi', 'kay', 'kei', 'key', 'kaye', 'kayy', 'kayu', 'kae', 'kya', 'kyi', 'keyi',
+  'qai', 'qei', 'qey', 'qayi',
+  'кай', 'кей', 'кэй', 'кайи', 'каи',
   'kadastr', 'cadastre',
 };
 
@@ -178,7 +179,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   // Qisqa oyna (≈3.6s) yozib, FAYL energiyasi (RMS) bo'yicha sukut/ovozни ajratadi —
   // sukut bo'lsa STTга yubormaydi, ovoz bo'lsa STT → wake-word ("Kai") tekshiradi.
   static const int _winMs = 3600;
-  static const double _rmsMinDbfs = -44.0; // yaqin/aniq ovozgina o'tadi (xona shovqini kioskni band qilmasin)
+  static const double _rmsMinDbfs = -48.0; // muvozanat: user ovozi yutilmasin, uzoq shovqin ham kirmasin
   Future<String?> _capture() async {
     final path = '${Directory.systemTemp.path}/kadastr_utt.wav';
     try {
