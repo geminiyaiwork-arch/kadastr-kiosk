@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../env.dart';
 import '../../router.dart';
@@ -82,8 +83,15 @@ class UpdateService {
     try {
       final tmp = '${Directory.systemTemp.path}\\kadastr-kiosk-setup-$v.exe';
       await Dio().download(exeUrl, tmp, options: Options(receiveTimeout: const Duration(minutes: 15)));
-      // SOKIN o'rnatish: eski nusxa yopiladi, yangilanadi; [Run] qayta ishga tushiradi.
-      await Process.start(tmp, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'], mode: ProcessStartMode.detached);
+      // MUHIM: UAC (ruxsat) oynasi TO'LIQ-EKRAN kiosk ORQASIDA qolib, yangilanish
+      // hech qachon boshlanmasdi! O'rnatishdan oldin kiosk kichrayadi — UAC ko'rinadi.
+      try {
+        await windowManager.setAlwaysOnTop(false);
+        await windowManager.setFullScreen(false);
+        await windowManager.minimize();
+      } catch (_) {}
+      // /SILENT: kichik jarayon-oynasi ko'rinadi; [Run] postinstall kioskни QAYTA ochadi.
+      await Process.start(tmp, ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'], mode: ProcessStartMode.detached);
       await Future.delayed(const Duration(seconds: 1));
       exit(0); // dastur o'zini yopadi — o'rnatgich davom etadi
     } catch (_) {

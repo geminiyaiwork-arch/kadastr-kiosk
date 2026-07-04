@@ -1,7 +1,7 @@
 ; Inno Setup script — single-file installer for the Kadastr Kiosk (Windows)
 [Setup]
 AppName=Kadastr Kiosk
-AppVersion=1.0.0
+AppVersion=1.8.8
 AppPublisher=Andijon viloyati kadastr palatasi
 DefaultDirName={autopf}\KadastrKiosk
 DefaultGroupName=Kadastr Kiosk
@@ -36,4 +36,4 @@ Name: "{commondesktop}\Kadastr Kiosk"; Filename: "{app}\kadastr_kiosk.exe"; Task
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "KadastrKiosk"; ValueData: """{app}\kadastr_kiosk.exe"""; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-Filename: "{app}\kadastr_kiosk.exe"; Description: "Hozir ishga tushirish"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\kadastr_kiosk.exe"; Description: "Hozir ishga tushirish"; Flags: nowait postinstall
