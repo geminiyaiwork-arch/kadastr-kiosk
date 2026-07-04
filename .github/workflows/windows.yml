@@ -10,6 +10,9 @@ jobs:
     # windows-2022 ships VS 2022 (v17) — Flutter maps it to the right CMake
     # generator. windows-latest now has VS 2026 (v18) which Flutter can't target.
     runs-on: windows-2022
+    env:
+      CODESIGN_PFX_B64: ${{ secrets.CODESIGN_PFX_B64 }}
+      CODESIGN_PW: ${{ secrets.CODESIGN_PW }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,6 +45,27 @@ jobs:
             if (Test-Path $src) { Copy-Item $src $dst -Force; Write-Host "qo'shildi: $d" }
           }
 
+      # --- KOD IMZOLASH (self-signed) — "noshiri tasdiqlanmadi" ogohlantirishini yo'qotadi ---
+      # Sertifikat repo secret'ida (CODESIGN_PFX_B64 + CODESIGN_PW). Bo'lmasa imzosiz quriladi.
+      - name: Decode signing certificate
+        if: env.CODESIGN_PFX_B64 != ''
+        shell: pwsh
+        run: |
+          [System.IO.File]::WriteAllBytes("$env:RUNNER_TEMP\codesign.pfx", [System.Convert]::FromBase64String($env:CODESIGN_PFX_B64))
+          $st = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
+          if (-not $st) { $st = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1 }
+          "SIGNTOOL=$($st.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "signtool: $($st.FullName)"
+
+      - name: Sign app executable
+        if: env.CODESIGN_PFX_B64 != ''
+        shell: pwsh
+        run: |
+          $exe = "build\windows\x64\runner\Release\kadastr_kiosk.exe"
+          & "$env:SIGNTOOL" sign /f "$env:RUNNER_TEMP\codesign.pfx" /p "$env:CODESIGN_PW" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Kadastr Kiosk" $exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool app exe imzolamadi ($LASTEXITCODE)" }
+          & "$env:SIGNTOOL" verify /pa $exe
+
       - name: Zip release bundle (portable)
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath kadastr-kiosk-windows.zip
 
@@ -50,6 +74,15 @@ jobs:
 
       - name: Build installer (Setup.exe)
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\kiosk.iss'
+
+      - name: Sign installer
+        if: env.CODESIGN_PFX_B64 != ''
+        shell: pwsh
+        run: |
+          $inst = "installer_out\kadastr-kiosk-setup.exe"
+          & "$env:SIGNTOOL" sign /f "$env:RUNNER_TEMP\codesign.pfx" /p "$env:CODESIGN_PW" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Kadastr Kiosk Setup" $inst
+          if ($LASTEXITCODE -ne 0) { throw "signtool installer imzolamadi ($LASTEXITCODE)" }
+          & "$env:SIGNTOOL" verify /pa $inst
 
       - name: Upload portable zip
         uses: actions/upload-artifact@v4
