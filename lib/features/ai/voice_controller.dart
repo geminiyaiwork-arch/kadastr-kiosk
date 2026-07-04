@@ -56,43 +56,13 @@ class VoiceUiState {
 
 /// Wake-word variants for "KAI" (= Kadastr AI), incl. Whisper mis-hearings.
 const _wakeSet = {
-  'kai',
-  'kayi',
-  'kay',
-  'kei',
-  'key',
-  'kaye',
-  'qay',
-  'qai',
-  'qei',
-  'qey',
-  'qiy',
-  'qyi',
-  'kayy',
-  'kae',
-  'kya',
-  'kyi',
-  'gay',
-  'gey',
-  'gai',
-  'kayu',
-  'qayu',
-  'kaa',
-  'qaa',
-  'кай',
-  'кей',
-  'кэй',
-  'кайи',
-  'кад',
-  'гай',
-  'гей',
-  'kadastr',
-  'cadastre',
+  'kai', 'kayi', 'kay', 'kei', 'key', 'kaye', 'kayy', 'kayu', 'qai', 'qei', 'qey',
+  'кай', 'кей', 'кэй', 'кайи',
+  'kadastr', 'cadastre',
 };
 
-/// Fuzzy wake match — Whisper "Kai"ни turlicha yozadi (qey/kay/gey…): k/q/g + unli(+y/i).
-final _wakeRe = RegExp(r'^[kqg][aeiouyаеёиоуэыюяй]{1,2}[yiй]?$');
-bool _wakeFuzzy(String w) => w.length >= 3 && w.length <= 4 && _wakeRe.hasMatch(w); // 2-harfli ('ku','qa') ism EMAS
+// Fuzzy-moslik O'CHIRILDI: 'qo'y/qay/gey' kabi oddiy so'zlar ism deb olinardi.
+bool _wakeFuzzy(String w) => false;
 
 /// Single always-on voice engine: mic → VAD → /stt → wake-route → /ai/chat → TTS.
 /// Runs globally; on the AI page the wake word is optional.
@@ -283,8 +253,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     final latin = RegExp(r'[A-Za-zÀ-ɏʻ‘’]').allMatches(text).length;
     final cyr = RegExp(r'[Ѐ-ӿ]').allMatches(text).length;
     final foreign = RegExp(r'[؀-ۿऀ-ॿঀ-৿฀-๿぀-ヿ一-鿿가-힯]').allMatches(text).length;
-    final good = _lang == 'ru' ? cyr : (latin + cyr);
-    return good >= 2 && foreign <= good;
+    if (_lang == 'ru') return cyr >= 2 && foreign <= cyr;
+    // uz/en: STT lotin yozadi; kirill USTUN kelsa — buzuq eshitish (ruscha javob chiqmasin)
+    return latin >= 2 && foreign <= latin && cyr <= latin;
   }
 
   /// Find wake word in the first 3 tokens. null=no wake, ''=wake only, 'cmd'=wake+command.
