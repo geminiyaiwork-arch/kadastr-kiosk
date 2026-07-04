@@ -9,6 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../core/env.dart';
 import '../core/i18n/strings.dart';
+import '../core/network/api_client.dart';
 import '../core/network/repository.dart';
 import '../core/services/avatar_player.dart';
 import '../core/theme/text_styles.dart';
@@ -103,6 +104,8 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
   int _fxKind = 0;
   bool _videoReady = false;
   bool _transing = false;
+  bool _muted = false;        // zastavka video ovozi (foydalanuvchi o'chira oladi)
+  bool _showCurFx = false;    // yakka video: har aylanishда joriy videoга animatsiya
   StreamSubscription<bool>? _doneSub;
   final _rnd = math.Random();
   late final AnimationController _fxA = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200));
@@ -111,6 +114,14 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
   void initState() {
     super.initState();
     _tryVideo();
+  }
+
+  // Zastavka diagnostikasi — qurilmada nima bo'lganini serverда ko'ramiz ([zastavka] ...).
+  void _log(String msg) {
+    try {
+      ref.read(dioProvider).post('/ai/heard',
+          data: {'text': '[zastavka] $msg', 'device': ''}).then((_) {}, onError: (_) {});
+    } catch (_) {}
   }
 
   Process? _mpv;
@@ -149,13 +160,13 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
     try {
       // refresh: birinchi urinishda tarmoq bo'lmasa bo'sh ro'yxat KESHLANIB
       // qolmasin; admin yangi video qo'shsa restart'siz yetib kelsin
-      _urls = await ref.refresh(screensaverProvider.future).timeout(const Duration(seconds: 6));
-      if (_urls.isEmpty || !mounted) return;
+      _urls = await ref.refresh(screensaverProvider.future).timeout(const Duration(seconds: 8));
+      if (_urls.isEmpty || !mounted) { _log('video ro\'yxati bo\'sh'); return; }
       final p = Player();
       _cur = p;
       _curC = VideoController(p);
-      await p.setVolume(100);
-      if (_urls.length == 1) await p.setPlaylistMode(PlaylistMode.loop); // yakka video — oddiy loop
+      await p.setVolume(_muted ? 0 : 100);
+      // PlaylistMode.loop O'RNATILMAYDI — loopни o'zimiz boshqaramiz (har aylanishда animatsiya).
       _watchEnd(p);
       await p.open(Media(_urls[0]), play: true);
       if (!mounted) {
@@ -163,8 +174,10 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
         return;
       }
       setState(() => _videoReady = true);
-    } catch (_) {
+      _log('video ochildi (${_urls.length} ta)');
+    } catch (e) {
       // video bo'lmadi — oddiy zastavka qoladi
+      _log('xato: $e');
     }
   }
 
@@ -173,15 +186,32 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
     _doneSub = p.stream.completed.listen((done) async {
       if (!done) return;
       if (_urls.length >= 2) {
-        _advance();
+        _advance();               // ko'p video: keyingisiga animatsiya bilan o'tadi
       } else {
-        // yakka video: PlaylistMode.loop ba'zi holatda ishlamasa — boshidan qayta
-        try {
-          await p.seek(Duration.zero);
-          await p.play();
-        } catch (_) {}
+        _loopSingleWithFx();      // yakka video: boshidan + TASODIFIY animatsiya
       }
     });
+  }
+
+  /// Yakka video: tugagach boshidan o'ynaydi va joriy videoга 10 uslubdan
+  /// tasodifiy animatsiya qo'llanadi (foydalanuvchi animatsiyalarni ko'radi).
+  Future<void> _loopSingleWithFx() async {
+    if (_transing || !mounted || _cur == null) return;
+    _transing = true;
+    try {
+      _fxKind = _rnd.nextInt(10);
+      try {
+        await _cur!.seek(Duration.zero);
+        await _cur!.play();
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() => _showCurFx = true);
+      await _fxA.forward(from: 0);
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _showCurFx = false);
+      _transing = false;
+    }
   }
 
   /// Keyingi videoga TASODIFIY animatsiya bilan o'tish.
@@ -197,7 +227,7 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
       // dispose() bu playerni ko'rib yopadi (ovoz-leak bo'lmasin)
       _next = p;
       _nextC = c;
-      await p.setVolume(100);
+      await p.setVolume(_muted ? 0 : 100);
       await p.open(Media(_urls[_idx]), play: true);
       _watchEnd(p); // EOF darhol kuzatiladi (qisqa klip transition ichida tugasa ham)
       if (!mounted) return; // dispose() _next'ni yopadi
@@ -232,6 +262,19 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
     }
   }
 
+  void _toggleMute() {
+    setState(() => _muted = !_muted);
+    final v = _muted ? 0.0 : 100.0;
+    try { _cur?.setVolume(v); } catch (_) {}
+    try { _next?.setVolume(v); } catch (_) {}
+  }
+
+  void _startAppeal() {
+    // zastavkani yopamiz va to'g'ridan-to'g'ri Murojaat sahifasini ochamiz
+    widget.onTouch();
+    ref.read(routerProvider).go('/appeal');
+  }
+
   @override
   void dispose() {
     try { _mpv?.kill(); } catch (_) {}
@@ -260,8 +303,15 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (_videoReady && _curC != null) Video(controller: _curC!, controls: NoVideoControls, fit: BoxFit.contain),
-            // KIRUVCHI video — 10 xil animatsiyadan tasodifiysi bilan
+            // JORIY video — yakka-video aylanishда unга ham tasodifiy animatsiya qo'llanadi
+            if (_videoReady && _curC != null)
+              _showCurFx
+                  ? _TransitionFx(
+                      kind: _fxKind,
+                      anim: _fxA,
+                      child: Video(controller: _curC!, controls: NoVideoControls, fit: BoxFit.contain))
+                  : Video(controller: _curC!, controls: NoVideoControls, fit: BoxFit.contain),
+            // KIRUVCHI video (ko'p video) — 10 xil animatsiyadan tasodifiysi bilan
             if (_nextC != null)
               _TransitionFx(
                 kind: _fxKind,
@@ -281,19 +331,57 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
                   Text(t['attractSub'] ?? '', style: K.heroSub.copyWith(fontSize: 30)),
                 ],
               ),
-            // "Ekranga teging" — video ustida ham ko'rinadi
+            // OVOZ o'chirish/yoqish knopkasi (faqat video bor bo'lsa) — yuqori o'ng burchakда
             if (_videoReady)
               Positioned(
-                left: 0,
-                right: 0,
-                bottom: 56,
-                child: Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 14),
-                    decoration: BoxDecoration(color: const Color(0x66000000), borderRadius: BorderRadius.circular(34)),
-                    child: Text(t['attractSub'] ?? '', style: K.heroSub.copyWith(fontSize: 26, color: Colors.white)),
-                  ),
+                top: 40,
+                right: 40,
+                child: _RoundBtn(
+                  icon: _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                  onTap: _toggleMute,
                 ),
+              ),
+            // Pastдa: "Murojaatni boshla" knopkasi + "Ekranga teging" ishorasi
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 56,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Katta, ko'zga tashlanadigan "Murojaatni boshla" knopkasi
+                  Center(
+                    child: GestureDetector(
+                      onTap: _startAppeal,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 46, vertical: 22),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(colors: [T.green, Color(0xFF16A34A)]),
+                          borderRadius: BorderRadius.circular(40),
+                          boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 24, offset: Offset(0, 8))],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.record_voice_over_rounded, color: Colors.white, size: 34),
+                            const SizedBox(width: 14),
+                            Text(t['attractAppeal'] ?? 'Murojaatni boshla',
+                                style: K.heroSub.copyWith(fontSize: 30, color: Colors.white, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 11),
+                      decoration: BoxDecoration(color: const Color(0x66000000), borderRadius: BorderRadius.circular(30)),
+                      child: Text(t['attractSub'] ?? '', style: K.heroSub.copyWith(fontSize: 22, color: Colors.white)),
+                    ),
+                  ),
+                ],
+              ),
               ),
           ],
         ),
@@ -302,8 +390,31 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
   }
 }
 
+/// Dumaloq yarim-shaffof knopka (ovoz o'chirish/yoqish uchun).
+class _RoundBtn extends StatelessWidget {
+  const _RoundBtn({required this.icon, required this.onTap});
+  final IconData icon;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 76,
+        height: 76,
+        decoration: const BoxDecoration(
+          color: Color(0x80000000),
+          shape: BoxShape.circle,
+          boxShadow: [BoxShadow(color: Color(0x44000000), blurRadius: 16, offset: Offset(0, 4))],
+        ),
+        child: Icon(icon, color: Colors.white, size: 40),
+      ),
+    );
+  }
+}
+
 /// 10 xil video-o'tish animatsiyasi (kiruvchi videoga qo'llanadi):
-/// 0 xira-o'tish, 1 o'ngdan siljish, 2 pastdan siljish, 3 kattalashib kirish,
+/// 0 xira-o'tish, 1 o'ngdan 3D siljish, 2 pastdan 3D siljish, 3 kattalashib kirish,
 /// 4 eshikday 3D burilish, 5 aylanib-kirish, 6 doira ochilish, 7 jalyuzi,
 /// 8 shaxmat-kublar, 9 shamol-barglar (uchma bo'laklar).
 class _TransitionFx extends StatelessWidget {
@@ -320,10 +431,22 @@ class _TransitionFx extends StatelessWidget {
       builder: (context, ch) {
         final v = Curves.easeInOutCubic.transform(anim.value);
         switch (kind) {
-          case 1: // o'ngdan siljish
-            return FractionalTranslation(translation: Offset(1 - v, 0), child: ch);
-          case 2: // pastdan siljish
-            return FractionalTranslation(translation: Offset(0, 1 - v), child: ch);
+          case 1: // o'ngdan 3D siljish (perspektiva bilan uchib kiradi)
+            return Transform(
+              alignment: Alignment.centerLeft,
+              transform: Matrix4.identity()
+                ..setEntry(3, 2, 0.0011)
+                ..rotateY((1 - v) * 0.7),
+              child: FractionalTranslation(translation: Offset(1 - v, 0), child: ch),
+            );
+          case 2: // pastdan 3D siljish (perspektiva bilan yotib turib ko'tariladi)
+            return Transform(
+              alignment: Alignment.bottomCenter,
+              transform: Matrix4.identity()
+                ..setEntry(3, 2, 0.0011)
+                ..rotateX((1 - v) * -0.7),
+              child: FractionalTranslation(translation: Offset(0, 1 - v), child: ch),
+            );
           case 3: // kattalashib kirish
             return Opacity(opacity: v, child: Transform.scale(scale: 0.72 + 0.28 * v, child: ch));
           case 4: // eshikday 3D burilish
