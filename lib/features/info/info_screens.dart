@@ -70,6 +70,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   int? _managerId;
   String? _bookedId;
   bool _loading = false;
+  bool _bookFail = false; // tarmoq/server xatosi — soxta "yozildingiz" ko'rsatmaslik uchun
 
   @override
   void dispose() {
@@ -80,18 +81,27 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
 
   Future<void> _book(List<ReceptionManager> mgrs) async {
     if (_name.text.trim().isEmpty || _phone.text.trim().isEmpty) return;
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _bookFail = false;
+    });
     final mid = _managerId ?? (mgrs.isNotEmpty ? mgrs.first.id : null);
-    var id = 'Q-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
+    String? id;
     try {
       final r = await ref.read(dioProvider).post('/reception/book',
           data: {'name': _name.text.trim(), 'phone': _phone.text.trim(), 'managerId': mid});
       final m = Map<String, dynamic>.from(r.data as Map);
       if (m['id'] != null) id = '${m['id']}';
     } catch (_) {}
+    if (!mounted) return;
     setState(() {
-      _bookedId = id;
       _loading = false;
+      // MUVAFFAQIYAT FAQAT server haqiqiy id qaytarganda — soxta lokal Q-raqam YO'Q.
+      if (id != null && id.isNotEmpty) {
+        _bookedId = id;
+      } else {
+        _bookFail = true;
+      }
     });
   }
 
@@ -156,8 +166,12 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                       ),
                     ),
                   ],
+                  if (_bookFail) ...[
+                    const SizedBox(height: 10),
+                    Text(t['recFail'], style: K.cardP.copyWith(color: const Color(0xFFD92D2D))),
+                  ],
                   const SizedBox(height: 16),
-                  KButton(t['recBtn'], onTap: () => _loading ? null : _book(list)),
+                  KButton(_loading ? '…' : t['recBtn'], onTap: () => _loading ? null : _book(list)),
                 ]),
               ),
             ]);

@@ -57,7 +57,7 @@ class VoiceUiState {
 /// Wake-word variants for "KAI" (= Kadastr AI), incl. Whisper mis-hearings.
 const _wakeSet = {
   'kai', 'kayi', 'kay', 'kei', 'key', 'kaye', 'kayy', 'kayu', 'kae', 'kya', 'kyi', 'keyi',
-  'qai', 'qei', 'qey', 'qayi',
+  'qai', 'qei', 'qey', // 'qayi' OLIB TASHLANDI — o'zbekcha "qay(si)" so'zi bilan chalkashardi (jonli: "qayi, non")
   'кай', 'кей', 'кэй', 'кайи', 'каи',
   'kadastr', 'cadastre',
 };
@@ -561,8 +561,21 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   }
 
   void _logHeard(String text, {bool acted = true}) {
-    _dio.post('/ai/heard', data: {'text': text, 'lang': _lang, 'acted': acted}).then((_) {}, onError: (_) {});
+    // device: instansiyalarni ajratish uchun (dev-mashina vs jonli kiosk). Server acted=false
+    // (ismsiz ambient nutq) MATNini saqlamaydi — faqat uzunlik; maxfiylik (#14).
+    _dio.post('/ai/heard', data: {
+      'text': text, 'lang': _lang, 'acted': acted, 'device': _deviceTag,
+    }).then((_) {}, onError: (_) {});
   }
+
+  static final String _deviceTag = () {
+    try {
+      final h = Platform.localHostname;
+      return h.isNotEmpty ? h : 'kiosk';
+    } catch (_) {
+      return 'kiosk';
+    }
+  }();
 
   @override
   void dispose() {

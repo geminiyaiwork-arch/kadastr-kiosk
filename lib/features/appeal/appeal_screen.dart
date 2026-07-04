@@ -23,6 +23,7 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
   final _text = TextEditingController();
   bool _loading = false;
   bool _err = false;
+  bool _sendFail = false; // tarmoq/server xatosi — soxta "qabul qilindi" ko'rsatmaslik uchun
   String? _sentId;
 
   @override
@@ -42,6 +43,7 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
     setState(() {
       _loading = true;
       _err = false;
+      _sendFail = false;
     });
     String? id;
     try {
@@ -57,7 +59,13 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
     if (!mounted) return;
     setState(() {
       _loading = false;
-      _sentId = (id != null && id.isNotEmpty) ? id : '—';
+      // MUVAFFAQIYAT FAQAT server haqiqiy id qaytarganda. Aks holda (tarmoq/500) —
+      // xato ko'rsatiladi, murojaat YO'QOLMASIN uchun foydalanuvchi qayta yuboradi.
+      if (id != null && id.isNotEmpty) {
+        _sentId = id;
+      } else {
+        _sendFail = true;
+      }
     });
   }
 
@@ -91,6 +99,10 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
                 if (_err) ...[
                   const SizedBox(height: 10),
                   Text(t['apNeed'], style: K.cardP.copyWith(color: const Color(0xFFD92D2D))),
+                ],
+                if (_sendFail) ...[
+                  const SizedBox(height: 10),
+                  Text(t['apFail'], style: K.cardP.copyWith(color: const Color(0xFFD92D2D))),
                 ],
                 const SizedBox(height: 16),
                 KButton(_loading ? '…' : t['apSend'], onTap: _send),
