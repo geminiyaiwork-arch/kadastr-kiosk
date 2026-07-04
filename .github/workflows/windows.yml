@@ -64,7 +64,8 @@ jobs:
           $exe = "build\windows\x64\runner\Release\kadastr_kiosk.exe"
           & "$env:SIGNTOOL" sign /f "$env:RUNNER_TEMP\codesign.pfx" /p "$env:CODESIGN_PW" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Kadastr Kiosk" $exe
           if ($LASTEXITCODE -ne 0) { throw "signtool app exe imzolamadi ($LASTEXITCODE)" }
-          & "$env:SIGNTOOL" verify /pa $exe
+          # verify /pa RUNNERда o'tmaydi (self-signed ildiz runner'да ishonchli emas) — bu normal;
+          # kioskда sertifikat o'rnatilgach ishonchli bo'ladi. Imzo qo'yildi (yuqorida "Successfully signed").
 
       - name: Zip release bundle (portable)
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath kadastr-kiosk-windows.zip
@@ -82,7 +83,7 @@ jobs:
           $inst = "installer_out\kadastr-kiosk-setup.exe"
           & "$env:SIGNTOOL" sign /f "$env:RUNNER_TEMP\codesign.pfx" /p "$env:CODESIGN_PW" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Kadastr Kiosk Setup" $inst
           if ($LASTEXITCODE -ne 0) { throw "signtool installer imzolamadi ($LASTEXITCODE)" }
-          & "$env:SIGNTOOL" verify /pa $inst
+          # verify /pa RUNNERда o'tmaydi (self-signed) — normal; imzo qo'yildi.
 
       - name: Upload portable zip
         uses: actions/upload-artifact@v4
