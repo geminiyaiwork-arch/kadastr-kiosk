@@ -54,6 +54,9 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
     File? clip;
     Player? p;
     try {
+      // speaking DARHOL yonadi (yuklashdan OLDIN) — UI avatar to'liq ekranda qoladi,
+      // "javob-karta chiqib, keyin video, keyin yana karta" lipillashi bo'lmaydi
+      state = AvatarPlayerState(speaking: true, session: state.session + 1);
       final r = await _dio.get<List<int>>(
         '/avatar/speak',
         queryParameters: {'text': text, 'lang': lang, 'voice': voice},

@@ -18,6 +18,14 @@ import 'features/social/social_screen.dart';
 /// page-aware behaviour: direct on /ai, paused on /appeal).
 final currentRouteProvider = StateProvider<String>((_) => '/');
 
+/// Zastavka (attract) ochiqmi — ochiq payt mikrofon TINGLAMAYDI
+/// (kiosk zastavka videosining o'z ovozini eshitib o'zini uyg'otmasin).
+final attractProvider = StateProvider<bool>((_) => false);
+
+/// Ovozli faoliyat "pulsi" — har wake/savol/javobda oshadi; idle-taymer
+/// buni ko'rib suhbat o'rtasida zastavka ochib yubormaydi.
+final voiceActivityProvider = StateProvider<int>((_) => 0);
+
 /// Root navigator — global dialoglar (auto-update oynasi) uchun.
 final rootNavigatorKey = GlobalKey<NavigatorState>();
 

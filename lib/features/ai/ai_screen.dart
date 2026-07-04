@@ -19,6 +19,12 @@ class AiScreen extends ConsumerStatefulWidget {
 }
 
 class _AiScreenState extends ConsumerState<AiScreen> {
+  // Burchakka chiqish spin'i FAQAT OLDINGA aylansin: har chiqishda +1 tur.
+  // (turns butun son bo'lgach, to'liq holatda vizual farq yo'q; orqaga
+  // qaytishda teskari 360° aylanish bo'lmaydi.)
+  bool _wasCorner = false;
+  int _spins = 0;
+
   @override
   void initState() {
     super.initState();
@@ -63,7 +69,9 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final v = ref.watch(voiceProvider);
     final avatar = ref.watch(avatarProvider).valueOrNull;
     final enabled = avatar?.enabled ?? false;
-    final url = enabled ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}' : null;  // /api/v1 bilan (resolveMedia 404 berardi); video bo'lsa idle jpg
+    final url = enabled
+        ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}'
+        : null; // /api/v1 bilan (resolveMedia 404 berardi); video bo'lsa idle jpg
     final hasData = v.answer.isNotEmpty;
 
     return Container(
@@ -80,9 +88,13 @@ class _AiScreenState extends ConsumerState<AiScreen> {
         final rect = (speakingVideo || !hasData)
             ? Rect.fromLTWH(0, 0, w, h)
             : Rect.fromLTWH(w - corner - 30, 30, corner, corner);
+        final cornerNow = hasData && !speakingVideo;
+        if (cornerNow && !_wasCorner) _spins++; // burchakka chiqishda bir tur oldinga
+        _wasCorner = cornerNow;
         return Stack(
           children: [
-            // dumaloq/to'liq avatar — bitta widget, o'lchami-joyi ANIMATSIYA bilan o'zgaradi
+            // dumaloq/to'liq avatar — bitta widget, o'lchami-joyi ANIMATSIYA bilan o'zgaradi.
+            // Burchakka chiqishda QUSHDAY bir marta aylanib "uchib" boradi.
             AnimatedPositioned(
               duration: _fx,
               curve: _fxCurve,
@@ -90,30 +102,41 @@ class _AiScreenState extends ConsumerState<AiScreen> {
               top: rect.top,
               width: rect.width,
               height: rect.height,
-              child: AnimatedContainer(
+              child: AnimatedRotation(
+                turns: _spins.toDouble(),
                 duration: _fx,
                 curve: _fxCurve,
-                clipBehavior: Clip.antiAlias,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E1E1E),
-                  borderRadius: BorderRadius.circular((hasData && !speakingVideo) ? corner / 2 : 0),
-                  border: (hasData && !speakingVideo) ? Border.all(color: v.speaking ? T.blue : Colors.white24, width: 5) : null,
-                  boxShadow: v.speaking
-                      ? [const BoxShadow(color: Color(0x732F6FE3), blurRadius: 46, spreadRadius: 6)]
-                      : (hasData ? [const BoxShadow(color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8))] : null),
+                child: AnimatedContainer(
+                  duration: _fx,
+                  curve: _fxCurve,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1E1E),
+                    borderRadius: BorderRadius.circular((hasData && !speakingVideo) ? corner / 2 : 0),
+                    border: (hasData && !speakingVideo)
+                        ? Border.all(color: v.speaking ? T.blue : Colors.white24, width: 5)
+                        : null,
+                    boxShadow: v.speaking
+                        ? [const BoxShadow(color: Color(0x732F6FE3), blurRadius: 46, spreadRadius: 6)]
+                        : (hasData
+                            ? [const BoxShadow(color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8))]
+                            : null),
+                  ),
+                  child: Builder(builder: (context) {
+                    // GAPIRGANDA — lab-sinxron VIDEO (Wav2Lip klip); JIM turganda — avatar RASMI.
+                    final ap = ref.watch(avatarPlayerProvider);
+                    final vctl = ref.read(avatarPlayerProvider.notifier).controller;
+                    if (enabled && ap.speaking && vctl != null) {
+                      return Video(controller: vctl, controls: NoVideoControls, fit: BoxFit.cover);
+                    }
+                    return (enabled && url != null)
+                        ? Image.network(url,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white)))
+                        : Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white));
+                  }),
                 ),
-                child: Builder(builder: (context) {
-                  // GAPIRGANDA — lab-sinxron VIDEO (Wav2Lip klip); JIM turganda — avatar RASMI.
-                  final ap = ref.watch(avatarPlayerProvider);
-                  final vctl = ref.read(avatarPlayerProvider.notifier).controller;
-                  if (enabled && ap.speaking && vctl != null) {
-                    return Video(controller: vctl, controls: NoVideoControls, fit: BoxFit.cover);
-                  }
-                  return (enabled && url != null)
-                      ? Image.network(url, fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white)))
-                      : Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white));
-                }),
               ),
             ),
             // JAVOB maydoni — matn + jadval KATTA ekranda. Video gapirayotganda
@@ -221,7 +244,7 @@ class _AnswerView extends StatelessWidget {
   String _cell(dynamic v) {
     final s = '$v';
     final n = num.tryParse(s.replaceAll(RegExp(r'[\s ]'), ''));
-    return n != null ? fmt(n) : s;   // raqam -> 1 812 ko'rinishida; matn ("250 000 so'm") o'z holicha
+    return n != null ? fmt(n) : s; // raqam -> 1 812 ko'rinishida; matn ("250 000 so'm") o'z holicha
   }
 
   @override
@@ -230,9 +253,8 @@ class _AnswerView extends StatelessWidget {
     final hasTable = rows.isNotEmpty;
     // Ba'zi javoblar jadvalni SARLAVHASIZ yuboradi (masalan noqonuniy-yerlar ro'yxati).
     // Sarlavha deb faqat 2-katagi RAQAM BO'LMAGAN birinchi qator olinadi ("Nomi|Soni").
-    final headed = rows.isNotEmpty &&
-        rows[0].length > 1 &&
-        num.tryParse('${rows[0][1]}'.replaceAll(RegExp(r'[\s ]'), '')) == null;
+    final headed =
+        rows.isNotEmpty && rows[0].length > 1 && num.tryParse('${rows[0][1]}'.replaceAll(RegExp(r'[\s ]'), '')) == null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,

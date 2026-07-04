@@ -11,6 +11,7 @@ import '../../core/env.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/repository.dart';
 import '../../core/services/avatar_player.dart';
+import '../../router.dart';
 
 enum VoicePhase { off, listening, transcribing, thinking, speaking }
 
@@ -32,7 +33,16 @@ class VoiceUiState {
     this.error,
   });
 
-  VoiceUiState copyWith({VoicePhase? phase, String? heard, String? answer, List<List<dynamic>>? table, bool? speaking, bool? recording, String? error, bool clearError = false, bool clearTable = false}) =>
+  VoiceUiState copyWith(
+          {VoicePhase? phase,
+          String? heard,
+          String? answer,
+          List<List<dynamic>>? table,
+          bool? speaking,
+          bool? recording,
+          String? error,
+          bool clearError = false,
+          bool clearTable = false}) =>
       VoiceUiState(
         phase: phase ?? this.phase,
         heard: heard ?? this.heard,
@@ -46,9 +56,38 @@ class VoiceUiState {
 
 /// Wake-word variants for "KAI" (= Kadastr AI), incl. Whisper mis-hearings.
 const _wakeSet = {
-  'kai', 'kayi', 'kay', 'kei', 'key', 'kaye', 'qay', 'qai', 'qei', 'qey', 'qiy', 'qyi',
-  'kayy', 'kae', 'kya', 'kyi', 'gay', 'gey', 'gai', 'kayu', 'qayu', 'kaa', 'qaa',
-  'кай', 'кей', 'кэй', 'кайи', 'кад', 'гай', 'гей', 'kadastr', 'cadastre',
+  'kai',
+  'kayi',
+  'kay',
+  'kei',
+  'key',
+  'kaye',
+  'qay',
+  'qai',
+  'qei',
+  'qey',
+  'qiy',
+  'qyi',
+  'kayy',
+  'kae',
+  'kya',
+  'kyi',
+  'gay',
+  'gey',
+  'gai',
+  'kayu',
+  'qayu',
+  'kaa',
+  'qaa',
+  'кай',
+  'кей',
+  'кэй',
+  'кайи',
+  'кад',
+  'гай',
+  'гей',
+  'kadastr',
+  'cadastre',
 };
 
 /// Fuzzy wake match — Whisper "Kai"ни turlicha yozadi (qey/kay/gey…): k/q/g + unli(+y/i).
@@ -67,6 +106,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   bool _busy = false;
   String _lang = 'uz';
   DateTime _lastRepeat = DateTime.fromMillisecondsSinceEpoch(0);
+  // KAI gapirganidan keyingi "suhbat oynasi" — shu vaqtgacha AI sahifasida
+  // ismsiz davom-savoli qabul qilinadi
+  DateTime _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
   bool Function()? onAiPage; // direct mode (no wake needed)
   bool Function()? canListen; // false on the appeal page (camera owns the mic)
@@ -253,42 +295,53 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     var wi = -1;
     for (var i = 0; i < min(3, words.length); i++) {
       final w = words[i];
-      if (_wakeSet.contains(w) || w.startsWith('kadastr') || w.startsWith('cadastre') || _wakeFuzzy(w)) {
+      if (_wakeSet.contains(w) ||
+          w.startsWith('kadastr') ||
+          w.startsWith('кадастр') ||
+          w.startsWith('cadastre') ||
+          _wakeFuzzy(w)) {
         wi = i;
         break;
       }
     }
     if (wi < 0) return null;
-    return words.sublist(wi + 1).join(' ').replaceAll(RegExp(r'^[\s,.:;!?"()\-—]+'), '').trim();
+    // "Kadastr AI" ikki so'z — ism DAVOMI ('ai/ey/аи') ham tashlanadi,
+    // aks holda "Kadastr AI" wake-only o'rniga content='ai' bo'lib qolardi
+    var j = wi + 1;
+    const tail = {'ai', 'ay', 'ey', 'eyi', 'ei', 'аи', 'ай', 'ии'};
+    while (j < words.length && tail.contains(words[j])) {
+      j++;
+    }
+    return words.sublist(j).join(' ').replaceAll(RegExp(r'^[\s,.:;!?"()\-—]+'), '').trim();
   }
 
   Future<void> _handle(String text) async {
     state = state.copyWith(heard: text);
     _logHeard(text);
     final onAi = onAiPage?.call() ?? false;
-    // Bosh sahifalarда "Kai" wake-word kerak; AI sahifaсида to'g'ridan-to'g'ri.
-    String content = text;
-    if (!onAi) {
-      final cmd = _stripWake(text);
-      if (cmd == null) {
-        _busy = false; // wake-word yo'q — e'tibor bermaymiz
-        return;
-      }
+    // HAMMA sahifada (AI sahifasida ham) faqat ISM bilan qabul qilinadi:
+    // "Kadastr AI ..." / "KAI ..." — atrofdagi begona suhbat AI'ni ishga tushirmaydi.
+    // Istisno: KAI o'zi javob berganidan keyin ~25s "suhbat oynasi" — davom savoli
+    // ISMSIZ ham qabul qilinadi (aks holda "qaytadan gapiring" degach gap tashlanardi).
+    // Mikrofon TUGMASI esa ism talab qilmaydi.
+    final cmd = _stripWake(text);
+    String content;
+    if (cmd != null) {
       content = cmd;
+    } else if (onAi && DateTime.now().isBefore(_followUntil)) {
+      content = text; // suhbat davomida ismsiz davom etish
     } else {
-      // AI sahifasida ham "Kadastr AI assalomu alaykum" desa — ISM tashlanadi,
-      // faqat gapning o'zi qabul qilinadi ("assalomu alaykum").
-      final cmd = _stripWake(text);
-      if (cmd != null && cmd.isNotEmpty) content = cmd;
+      _busy = false; // ism aytilmadi — e'tibor bermaymiz
+      return;
     }
-    // 1) OVOZLI SAHIFA-NAVIGATSIYA — oldindan tayyor sahifaга o'tadi (jadval shu yerда,
-    //    STT aniqligига bog'liq emas). Masalan "noqonuniy yerlar" → /illegal.
-    //    MUHIM: AI sahifasida FAQAT aniq "och/ko'rsat sahifa" buyrug'ida o'tadi —
-    //    oddiy savollar ("xatlov nima") sahifadan chiqarmaydi, AI javob beradi.
+    ref.read(voiceActivityProvider.notifier).state++; // idle-taymerga "faollik" pulsi
+    // 1) OVOZLI SAHIFA-NAVIGATSIYA — sahifaga JIM o'tadi (AI faqat AI sahifasida
+    //    gapiradi — boshqa sahifalarda ovozli izoh YO'Q).
+    //    AI sahifasida faqat aniq "och/sahifasini och" buyrug'ida o'tadi.
     final route = _matchRoute(content);
     if (route != null && navTo != null && (!onAi || _openCmd(content))) {
       navTo!(route);
-      await _speak(_navConfirm(route));
+      _busy = false;
       return;
     }
     // 2) Aks holda — AI savol (LLM)
@@ -332,32 +385,15 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (has(['murojaat', 'appeal', 'обращ', 'жалоб', 'shikoyat', 'ariza topshir', 'murojat'])) return '/appeal';
     if (has(['qabul', 'rahbar', 'reception', 'прием', 'приём'])) return '/reception';
     if (has(['yangilik', 'news', 'novost', 'новост'])) return '/news';
-    if (has(['ijtimoiy', 'social', 'tarmoq', 'instagram', 'telegram', 'facebook', 'youtube', 'соцсет'])) return '/social';
+    if (has(['ijtimoiy', 'social', 'tarmoq', 'instagram', 'telegram', 'facebook', 'youtube', 'соцсет'])) {
+      return '/social';
+    }
     if (has(['tuman', 'shahar', 'hudud', 'district', 'район'])) return '/districts';
     if (has(['xizmat', 'service', 'услуг'])) return '/services';
     if (has(['mulk', 'parcel', 'kadastr raqam', 'участок', 'uchastka'])) return '/property';
     if (has(['xatlov', '937'])) return '/xatlov';
     if (has(['bosh sahifa', 'asosiy', 'home', 'главн', 'orqaga'])) return '/';
     return null;
-  }
-
-  // Sahifага o'tgaach OVOZLI o'qib beriladigan matn (nafaqat nomi — sahifани tushuntiradi).
-  String _navConfirm(String route) {
-    const m = {
-      '/illegal': {'uz': 'Noqonuniy egallangan yerlar bo‘limi. Bu yerda tuman va shaharlar kesimida noqonuniy yerlar soni ko‘rsatilgan. O‘z ma’lumotingizni tekshirish uchun shaxsингизни tasdiqlang.', 'ru': 'Раздел незаконно занятых земель. Здесь показано количество по районам и городам.', 'en': 'Illegally occupied lands section, by district and city.'},
-      '/docs': {'uz': 'Hujjatlar va narxlar bo‘limi. Kadastr xizmatlari uchun kerakli hujjatlar va ularning narxlari.', 'ru': 'Раздел документов и цен на кадастровые услуги.', 'en': 'Documents and prices for cadastre services.'},
-      '/phones': {'uz': 'Telefonlar va aloqa raqamlari bo‘limi. Kerakli bo‘lim raqamlarини shu yerdан toping.', 'ru': 'Телефоны и контакты.', 'en': 'Phone numbers and contacts.'},
-      '/reception': {'uz': 'Rahbar qabuli bo‘limi. Qabul kunlari bilan tanishing va qabulga yozilишing mumkin.', 'ru': 'Приём руководителя. Можно записаться на приём.', 'en': 'Manager reception. You can book a reception.'},
-      '/appeal': {'uz': 'Murojaat yuborish bo‘limi. Ism, telefon va murojaat matnini yozib yuboring — javob telefon orqali beriladi.', 'ru': 'Раздел подачи обращения. Ответ дадут по телефону.', 'en': 'Submit an appeal here. We will reply by phone.'},
-      '/social': {'uz': 'Ijtimoiy tarmoqlar bo‘limi. Rasmiy sahifalarга o‘ting.', 'ru': 'Раздел социальных сетей.', 'en': 'Social networks section.'},
-      '/news': {'uz': 'Yangiliklar bo‘limi. Palataning so‘nggi yangiliklarи bilan tanishing.', 'ru': 'Раздел новостей.', 'en': 'News section.'},
-      '/districts': {'uz': 'Tumanlar va shaharlar bo‘limi. Har bir hudud bo‘yicha ma’lumot va rahbariyat.', 'ru': 'Районы и города, информация по каждому.', 'en': 'Districts and cities information.'},
-      '/services': {'uz': 'Xizmatlar bo‘limi. Barcha kadastr xizmatlarини shu yerda ko‘ring.', 'ru': 'Раздел услуг.', 'en': 'Services section.'},
-      '/property': {'uz': 'Ko‘chmas mulk tekshiruvi bo‘limi. Kadastr raqami bo‘yicha mulk holatini tekshiring.', 'ru': 'Проверка недвижимости по кадастровому номеру.', 'en': 'Property check by cadastre number.'},
-      '/xatlov': {'uz': 'To‘qqiz yuz o‘ttiz yetti-sonli qaror bo‘yicha xatlov bo‘limi. Andijon viloyati tumanları kesimida mahallalar va obyektlar xatlovi. Tuman ustiga bosib batafsil ma’lumotni ko‘ring.', 'ru': 'Раздел описи по постановлению 937 — по районам Андижанской области.', 'en': 'Inventory under Resolution 937, by Andijan districts.'},
-      '/': {'uz': 'Bosh sahifa. Kerakli bo‘limni tanlang yoki ovoz bilan ayting.', 'ru': 'Главная страница.', 'en': 'Home page.'},
-    };
-    return (m[route]?[_lang]) ?? '';
   }
 
   // ===== TAP-TO-TALK (qo'lda gapirish) — VAD/amplitude'siz, hamma platformada =====
@@ -372,7 +408,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       return;
     }
     _busy = true; // ambient loop'ni pauza qiladi (mikrofon to'qnashmasin)
-    try { await _player.stop(); } catch (_) {}
+    try {
+      await _player.stop();
+    } catch (_) {}
     try {
       if (!await _rec.hasPermission()) {
         state = state.copyWith(error: 'mic', recording: false);
@@ -385,7 +423,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       _manualPath = path;
       _manual = true;
       state = state.copyWith(phase: VoicePhase.listening, heard: '', recording: true, clearError: true);
-      Future.delayed(const Duration(seconds: 20), () { if (_manual) _finishTalk(); }); // xavfsizlik cheki
+      Future.delayed(const Duration(seconds: 20), () {
+        if (_manual) _finishTalk();
+      }); // xavfsizlik cheki
     } catch (_) {
       _manual = false;
       _busy = false;
@@ -404,11 +444,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (text != null && text.trim().isNotEmpty) {
       state = state.copyWith(heard: text.trim());
       _logHeard(text.trim());
-      // Tugma AI sahifasida — navigatsiya FAQAT aniq "och" buyrug'ida; aks holda AI javob beradi.
+      // Tugma AI sahifasida — navigatsiya FAQAT aniq "och" buyrug'ida (JIM o'tadi);
+      // aks holda AI javob beradi. Tugma orqali ISM shart emas.
       final route = _matchRoute(text.trim());
       if (route != null && navTo != null && _openCmd(text.trim())) {
         navTo!(route);
-        await _speak(_navConfirm(route));
+        _busy = false;
       } else {
         await askAI(text.trim());
       }
@@ -456,7 +497,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     final route = _matchRoute(q);
     if (route != null && navTo != null) {
       navTo!(route);
-      await _speak(_navConfirm(route));
+      _busy = false; // sahifaga JIM o'tadi (ovoz faqat AI sahifasida)
       return;
     }
     navToAi?.call();
@@ -510,6 +551,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
       if (ok) {
         state = state.copyWith(speaking: false);
+        _followUntil = DateTime.now().add(const Duration(seconds: 25)); // suhbat oynasi
         _busy = false;
         return;
       }
@@ -530,13 +572,16 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       final done = _player.onPlayerComplete.first;
       await _player.play(UrlSource(url));
       await Future.any<void>([done, Future<void>.delayed(Duration(seconds: capSec))]);
-      try { await _player.stop(); } catch (_) {}   // cap'da to'xtatiladi (o'z ovozini eshitmasin)
+      try {
+        await _player.stop();
+      } catch (_) {} // cap'da to'xtatiladi (o'z ovozini eshitmasin)
     } catch (e) {
       // Ovoz chalinmasa sababи konsolда ko'rinsin (jim yutilib ketmasin)
       // ignore: avoid_print
       print('[tts] play xato: $e');
     }
     state = state.copyWith(speaking: false);
+    _followUntil = DateTime.now().add(const Duration(seconds: 25)); // suhbat oynasi
     _busy = false;
   }
 

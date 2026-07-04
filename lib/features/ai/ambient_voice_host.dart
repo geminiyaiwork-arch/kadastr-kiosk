@@ -25,7 +25,9 @@ class _AmbientVoiceHostState extends ConsumerState<AmbientVoiceHost> {
     notifier.startAmbient(
       lang: ref.read(localeProvider),
       onAiPage: () => ref.read(currentRouteProvider) == '/ai',
-      canListen: () => ref.read(currentRouteProvider) != '/appeal',
+      // /appeal (kamera mikrofonni oladi) va ZASTAVKA payti tinglamaymiz —
+      // kiosk zastavka videosining ovozini o'zi eshitib o'zini uyg'otmasin.
+      canListen: () => ref.read(currentRouteProvider) != '/appeal' && !ref.read(attractProvider),
       navToAi: () => ref.read(routerProvider).go('/ai'),
       navTo: (route) => ref.read(routerProvider).go(route),
     );
