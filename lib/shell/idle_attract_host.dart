@@ -303,21 +303,22 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // JORIY video — yakka-video aylanishда unга ham tasodifiy animatsiya qo'llanadi
+            // JORIY video — ekranни TO'LDIRADI (cover); yakka-video aylanishда animatsiya bilan
             if (_videoReady && _curC != null)
               _showCurFx
                   ? _TransitionFx(
                       kind: _fxKind,
                       anim: _fxA,
-                      child: Video(controller: _curC!, controls: NoVideoControls, fit: BoxFit.contain))
-                  : Video(controller: _curC!, controls: NoVideoControls, fit: BoxFit.contain),
-            // KIRUVCHI video (ko'p video) — 10 xil animatsiyadan tasodifiysi bilan
+                      child: Video(controller: _curC!, controls: NoVideoControls, fit: BoxFit.cover))
+                  : Video(controller: _curC!, controls: NoVideoControls, fit: BoxFit.cover),
+            // KIRUVCHI video (ko'p video) — 10 xil 3D animatsiyadan tasodifiysi bilan
             if (_nextC != null)
               _TransitionFx(
                 kind: _fxKind,
                 anim: _fxA,
-                child: Video(controller: _nextC!, controls: NoVideoControls, fit: BoxFit.contain),
+                child: Video(controller: _nextC!, controls: NoVideoControls, fit: BoxFit.cover),
               ),
+            // Video hali tayyor emas — logo (fon qora bo'lib qolmasin)
             if (!_videoReady)
               Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -331,57 +332,28 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
                   Text(t['attractSub'] ?? '', style: K.heroSub.copyWith(fontSize: 30)),
                 ],
               ),
-            // OVOZ o'chirish/yoqish knopkasi (faqat video bor bo'lsa) — yuqori o'ng burchakда
+            // SOAT + SANA — yuqori o'ng burchak
+            const Positioned(top: 44, right: 44, child: _ClockWidget()),
+            // Pastki-CHAP: "Murojaat yo'llash"
+            Positioned(
+              left: 40,
+              bottom: 48,
+              child: _PillBtn(
+                icon: Icons.send_rounded,
+                label: t['attractAppeal'] ?? 'Murojaat yo‘llash',
+                onTap: _startAppeal,
+              ),
+            ),
+            // Pastki-O'NG: "Ovozni o'chirish/yoqish" — faqat video bor bo'lsa
             if (_videoReady)
               Positioned(
-                top: 40,
                 right: 40,
-                child: _RoundBtn(
+                bottom: 48,
+                child: _PillBtn(
                   icon: _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                  label: (_muted ? t['attractUnmute'] : t['attractMute']) ?? 'Ovozni o‘chirish',
                   onTap: _toggleMute,
                 ),
-              ),
-            // Pastдa: "Murojaatni boshla" knopkasi + "Ekranga teging" ishorasi
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 56,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Katta, ko'zga tashlanadigan "Murojaatni boshla" knopkasi
-                  Center(
-                    child: GestureDetector(
-                      onTap: _startAppeal,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 46, vertical: 22),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(colors: [T.green, Color(0xFF16A34A)]),
-                          borderRadius: BorderRadius.circular(40),
-                          boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 24, offset: Offset(0, 8))],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.record_voice_over_rounded, color: Colors.white, size: 34),
-                            const SizedBox(width: 14),
-                            Text(t['attractAppeal'] ?? 'Murojaatni boshla',
-                                style: K.heroSub.copyWith(fontSize: 30, color: Colors.white, fontWeight: FontWeight.w700)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 11),
-                      decoration: BoxDecoration(color: const Color(0x66000000), borderRadius: BorderRadius.circular(30)),
-                      child: Text(t['attractSub'] ?? '', style: K.heroSub.copyWith(fontSize: 22, color: Colors.white)),
-                    ),
-                  ),
-                ],
-              ),
               ),
           ],
         ),
@@ -390,25 +362,85 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
   }
 }
 
-/// Dumaloq yarim-shaffof knopka (ovoz o'chirish/yoqish uchun).
-class _RoundBtn extends StatelessWidget {
-  const _RoundBtn({required this.icon, required this.onTap});
+/// Qorong'i yarim-shaffof pill-knopka (ikonка + matn) — mockup uslubi.
+class _PillBtn extends StatelessWidget {
+  const _PillBtn({required this.icon, required this.label, required this.onTap});
   final IconData icon;
+  final String label;
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 76,
-        height: 76,
-        decoration: const BoxDecoration(
-          color: Color(0x80000000),
-          shape: BoxShape.circle,
-          boxShadow: [BoxShadow(color: Color(0x44000000), blurRadius: 16, offset: Offset(0, 4))],
+        padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
+        decoration: BoxDecoration(
+          color: const Color(0xB3121826), // qorong'i yarim-shaffof
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: const Color(0x33FFFFFF), width: 1),
+          boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 20, offset: Offset(0, 6))],
         ),
-        child: Icon(icon, color: Colors.white, size: 40),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 30),
+            const SizedBox(width: 14),
+            Text(label, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w600)),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+/// Soat + sana (yuqori o'ng burchak) — har soniyada yangilanadi (o'z taymeri).
+class _ClockWidget extends StatefulWidget {
+  const _ClockWidget();
+  @override
+  State<_ClockWidget> createState() => _ClockWidgetState();
+}
+
+class _ClockWidgetState extends State<_ClockWidget> {
+  DateTime _now = DateTime.now();
+  Timer? _t;
+  @override
+  void initState() {
+    super.initState();
+    _t = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  String _2(int n) => n.toString().padLeft(2, '0');
+
+  @override
+  Widget build(BuildContext context) {
+    final time = '${_2(_now.hour)}:${_2(_now.minute)}';
+    final date = '${_2(_now.day)}.${_2(_now.month)}.${_now.year}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(time,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 54,
+                fontWeight: FontWeight.w800,
+                height: 1.0,
+                shadows: [Shadow(color: Color(0x99000000), blurRadius: 12, offset: Offset(0, 2))])),
+        const SizedBox(height: 4),
+        Text(date,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.w500,
+                shadows: [Shadow(color: Color(0x99000000), blurRadius: 10, offset: Offset(0, 2))])),
+      ],
     );
   }
 }
