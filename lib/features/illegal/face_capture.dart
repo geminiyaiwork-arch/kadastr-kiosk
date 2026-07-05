@@ -1,20 +1,22 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/env.dart';
 import '../../core/theme/text_styles.dart';
 import '../../core/theme/tokens.dart';
 import '../common/widgets.dart';
 
-/// Face capture for kiosk Face-ID (MyID embedded).
-/// Yo'riqli JONLI avto-suratga olish: kamera ochilгач tizim O'ZI yuzни markazlashtirishни
-/// so'raydi → sekin tepaga/o'ngga/chapga qarash yo'riqlari (jonlilik tuyg'usi) → "to'g'ri
-/// qarang" + 3-2-1 sanoq → AVTOMATIK suratga oladi (tugma yo'q) → onCaptured orqali darhol
-/// MyID tekshiruviga yuboriladi. Haqiqiy yuz-solishtiruv + jonlilikни MyID serveri qiladi.
-/// - Windows/macOS: native `camera` paketi (sahifa ichида preview).
-/// - Linux: bundlangan `myid-camera` WebKitGTK helper.
+/// AKTIV JONLILIK (liveness) yuz-tekshiruvi — kiosk O'ZI harakatni aniqlaydi.
+/// Oqim: kamera kadrlarini serverga (MediaPipe: yaw/pitch/ear) yuboradi →
+/// "Boshingizni o'ngga → chapga buring → ko'zingizni pirpirating → to'g'ri qarang"
+/// qadamlarини REAL aniqlaydi (soxta foto o'tmaydi) → to'g'ri-frontal kadrni MyID'ga yuboradi.
+/// Windows kiosk = `camera` paketi. Linux = bundlangan `myid-camera` helper (o'zgармаган).
 class FaceCapture extends StatefulWidget {
   const FaceCapture({super.key, required this.t, required this.onCaptured, required this.onCancel});
   final Map<String, String> t;
@@ -24,25 +26,34 @@ class FaceCapture extends StatefulWidget {
   State<FaceCapture> createState() => _FaceCaptureState();
 }
 
-class _FaceCaptureState extends State<FaceCapture> with SingleTickerProviderStateMixin {
+class _FaceCaptureState extends State<FaceCapture> {
   CameraController? _cam;
   bool _noCamera = false;
-  bool _busy = false;
-  bool _failed = false; // suratga olishда xato — qayta urinish
-  bool _linuxRunning = false; // Linux helper oynasi ochiq
-  bool _cancelled = false; // dispose/bekor — oqim to'xtaydi
-  bool _flowStarted = false;
+  bool _linuxRunning = false;
+  bool _cancelled = false;
+  bool _busy = false; // takePicture jarayonда
+  bool _done = false;
+  Timer? _timer;
 
-  late final AnimationController _ring; // aylanuvchi skaner halqasi
+  final Dio _dio = Dio(BaseOptions(
+    baseUrl: Env.apiBase,
+    connectTimeout: const Duration(seconds: 6),
+    receiveTimeout: const Duration(seconds: 6),
+  ));
+
+  // Holat-mashinasi: 0 kalibr, 1 yon burilish A, 2 yon B (teskari), 3 pirpirash, 4 to'g'ri→surat
+  int _phase = 0;
+  int _calibN = 0;
+  double _baseYaw = 0, _basePitch = 0;
+  int _turnSign = 0;
+  bool _blinkClosed = false;
+  bool _stepOk = false;
   String _hint = '';
-  IconData? _hintIcon;
-  int _countdown = 0; // >0 bo'lsa markazда katta raqam
 
   @override
   void initState() {
     super.initState();
-    _ring = AnimationController(vsync: this, duration: const Duration(milliseconds: 2200))..repeat();
-    _hint = widget.t['faceStepCenter'] ?? 'Yuzingizni doira ichiga joylang';
+    _hint = widget.t['faceLoading'] ?? 'Kamera tayyorlanmoqda…';
     if (Platform.isLinux) {
       _linuxCapture();
     } else {
@@ -53,12 +64,12 @@ class _FaceCaptureState extends State<FaceCapture> with SingleTickerProviderStat
   @override
   void dispose() {
     _cancelled = true;
-    _ring.dispose();
+    _timer?.cancel();
     _cam?.dispose();
     super.dispose();
   }
 
-  /// Linux: bundlangan WebKitGTK helper (fullscreen kamera) → rasm faylга → o'qib uzatamiz.
+  // ---- Linux: bundlangan WebKitGTK helper (o'zgармаган) ----
   Future<void> _linuxCapture() async {
     final helper = '${File(Platform.resolvedExecutable).parent.path}/myid-camera';
     if (!File(helper).existsSync()) {
@@ -77,81 +88,117 @@ class _FaceCaptureState extends State<FaceCapture> with SingleTickerProviderStat
         try { f.deleteSync(); } catch (_) {}
       }
       if (!mounted) return;
-      if (photo != null) {
-        widget.onCaptured(photo);
-      } else {
-        widget.onCancel();
-      }
+      if (photo != null) { widget.onCaptured(photo); } else { widget.onCancel(); }
     } catch (_) {
       if (mounted) setState(() { _linuxRunning = false; _noCamera = true; });
     }
   }
 
+  // ---- Windows/desktop kamera ----
   Future<void> _init() async {
     try {
       final cams = await availableCameras();
       if (cams.isEmpty) { setState(() => _noCamera = true); return; }
-      final front = cams.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.front,
-        orElse: () => cams.first,
-      );
-      final c = CameraController(front, ResolutionPreset.high, enableAudio: false);
+      final front = cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front, orElse: () => cams.first);
+      final c = CameraController(front, ResolutionPreset.medium, enableAudio: false);
       await c.initialize();
       if (!mounted) return;
-      setState(() => _cam = c);
-      _startFlow();
+      setState(() { _cam = c; _hint = widget.t['faceCalib'] ?? 'Tayyorlanmoqda…'; });
+      _schedule(const Duration(milliseconds: 300));
     } catch (_) {
       if (mounted) setState(() => _noCamera = true);
     }
   }
 
-  void _startFlow() {
-    if (_flowStarted) return;
-    _flowStarted = true;
-    _runFlow();
+  void _schedule(Duration d) {
+    if (_cancelled || _done || !mounted) return;
+    _timer = Timer(d, _tick);
   }
 
-  /// Yo'riqli jonlilik ketma-ketligi → avtomatik suratga olish (tugmasiz).
-  Future<void> _runFlow() async {
-    final t = widget.t;
-    final steps = <(String, IconData, int)>[
-      (t['faceStepCenter'] ?? 'Yuzingizni doira ichiga joylang', Icons.center_focus_strong_rounded, 1500),
-      (t['faceStepUp'] ?? 'Boshingizni sekin tepaga', Icons.keyboard_arrow_up_rounded, 950),
-      (t['faceStepRight'] ?? 'Sekin o‘ngga buring', Icons.keyboard_arrow_right_rounded, 950),
-      (t['faceStepLeft'] ?? 'Sekin chapga buring', Icons.keyboard_arrow_left_rounded, 950),
-      (t['faceStepFront'] ?? 'Endi to‘g‘ri qarang', Icons.face_retouching_natural_rounded, 950),
-    ];
-    for (final s in steps) {
-      if (!mounted || _cancelled) return;
-      setState(() { _hint = s.$1; _hintIcon = s.$2; _countdown = 0; });
-      await Future.delayed(Duration(milliseconds: s.$3));
-    }
-    for (var n = 3; n >= 1; n--) {
-      if (!mounted || _cancelled) return;
-      setState(() { _hint = t['faceHold'] ?? 'To‘g‘ri qarang'; _hintIcon = null; _countdown = n; });
-      await Future.delayed(const Duration(milliseconds: 650));
-    }
-    if (!mounted || _cancelled) return;
-    await _capture();
-  }
-
-  Future<void> _capture() async {
+  Future<void> _tick() async {
+    if (_cancelled || _done || !mounted) return;
     final c = _cam;
-    if (c == null || _busy) return;
-    setState(() { _busy = true; _countdown = 0; _hint = widget.t['verifying'] ?? 'Tekshirilmoqda…'; _hintIcon = null; });
+    if (c == null || _busy) { _schedule(const Duration(milliseconds: 250)); return; }
+    _busy = true;
     try {
       final file = await c.takePicture();
       final bytes = await file.readAsBytes();
-      if (!mounted || _cancelled) return;
-      widget.onCaptured('data:image/jpeg;base64,${base64Encode(bytes)}');
+      try { File(file.path).deleteSync(); } catch (_) {}
+      Map<String, dynamic> m = const {};
+      try {
+        final r = await _dio.post('/liveness/analyze',
+            data: {'image': 'data:image/jpeg;base64,${base64Encode(bytes)}'});
+        if (r.data is Map) m = Map<String, dynamic>.from(r.data as Map);
+      } catch (_) {}
+      if (!mounted || _cancelled || _done) return;
+      _process(m, bytes);
     } catch (_) {
-      if (mounted) setState(() { _busy = false; _failed = true; });
+      // kadr o'tkazib yuborildi
+    } finally {
+      _busy = false;
+      _schedule(const Duration(milliseconds: 200));
     }
   }
 
-  void _retry() {
-    setState(() { _failed = false; _flowStarted = false; _busy = false; _countdown = 0; });
-    _startFlow();
+  void _process(Map<String, dynamic> m, Uint8List bytes) {
+    final face = m['face'] == true;
+    final t = widget.t;
+    if (!face) {
+      setState(() => _hint = t['faceNoFace'] ?? 'Yuzingizni doira ichiga to‘g‘rilang');
+      return;
+    }
+    final yaw = (m['yaw'] as num?)?.toDouble() ?? 0.0;
+    final pitch = (m['pitch'] as num?)?.toDouble() ?? 0.0;
+    final ear = (m['ear'] as num?)?.toDouble() ?? 0.3;
+
+    switch (_phase) {
+      case 0: // kalibratsiya (baseline)
+        _baseYaw += yaw; _basePitch += pitch; _calibN++;
+        setState(() => _hint = t['faceCalib'] ?? 'Tayyorlanmoqda…');
+        if (_calibN >= 5) { _baseYaw /= _calibN; _basePitch /= _calibN; _advance(1); }
+        break;
+      case 1: // yon burilish (o'ngga)
+        setState(() => _hint = t['faceTurnR'] ?? 'Boshingizni sekin O‘NGGA buring');
+        final dy = yaw - _baseYaw;
+        if (dy.abs() > 14) { _turnSign = dy > 0 ? 1 : -1; _advance(2); }
+        break;
+      case 2: // teskari yon (chapga)
+        setState(() => _hint = t['faceTurnL'] ?? 'Endi sekin CHAPGA buring');
+        final dy = yaw - _baseYaw;
+        if (_turnSign != 0 && (dy > 0 ? 1 : -1) == -_turnSign && dy.abs() > 14) _advance(3);
+        break;
+      case 3: // pirpirash
+        setState(() => _hint = t['faceBlink'] ?? 'Ko‘zingizni yuming va oching');
+        if (ear < 0.17) _blinkClosed = true;
+        if (_blinkClosed && ear > 0.26) _advance(4);
+        break;
+      case 4: // to'g'ri qarang → SURATGA OL + yubor
+        setState(() => _hint = t['faceHold'] ?? 'To‘g‘ri qarang');
+        if ((yaw - _baseYaw).abs() < 9 && (pitch - _basePitch).abs() < 13 && ear > 0.2) {
+          _done = true;
+          _timer?.cancel();
+          setState(() => _hint = t['verifying'] ?? 'Tekshirilmoqda…');
+          widget.onCaptured('data:image/jpeg;base64,${base64Encode(bytes)}');
+        }
+        break;
+    }
+  }
+
+  void _advance(int p) {
+    _phase = p;
+    _blinkClosed = false;
+    setState(() => _stepOk = true);
+    Timer(const Duration(milliseconds: 700), () { if (mounted) setState(() => _stepOk = false); });
+  }
+
+  IconData _phaseIcon() {
+    switch (_phase) {
+      case 1: return Icons.chevron_right_rounded;
+      case 2: return Icons.chevron_left_rounded;
+      case 3: return Icons.remove_red_eye_rounded;
+      case 4: return Icons.face_retouching_natural_rounded;
+      default: return Icons.hourglass_bottom_rounded;
+    }
   }
 
   @override
@@ -176,86 +223,71 @@ class _FaceCaptureState extends State<FaceCapture> with SingleTickerProviderStat
       child: Column(children: [
         Text(t['faceTitle']!, textAlign: TextAlign.center, style: K.cardH),
         const SizedBox(height: 6),
-        Text(t['faceAuto'] ?? 'Tizim yuzingizni avtomatik suratga oladi — qimirlamang',
+        Text(t['faceLiveHint'] ?? 'Tizim jonliligingizni tekshiradi — ko‘rsatmalarga amal qiling',
             textAlign: TextAlign.center, style: K.pgSub),
         const SizedBox(height: 18),
-        if (ready)
-          _circle()
-        else if (_noCamera)
+        if (ready) _circle() else if (_noCamera)
           Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(color: T.errBg, borderRadius: BorderRadius.circular(14)),
             child: Text(t['faceNoCam']!, textAlign: TextAlign.center, style: K.cardP.copyWith(color: T.errText)),
           )
-        else
-          const Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: T.blue)),
+        else const Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: T.blue)),
         const SizedBox(height: 18),
-        if (ready && !_failed)
+        if (ready)
           Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(_busy ? Icons.verified_rounded : Icons.center_focus_weak_rounded, color: T.green, size: 24),
+            Icon(_done ? Icons.verified_rounded : _phaseIcon(), color: T.green, size: 26),
             const SizedBox(width: 10),
             Flexible(child: Text(_hint, textAlign: TextAlign.center,
-                style: K.cardH.copyWith(fontSize: 22, color: _busy ? T.green : T.navy))),
+                style: K.cardH.copyWith(fontSize: 22, color: _done ? T.green : T.navy))),
           ]),
-        if (_failed) ...[
-          Text(t['faceRetryMsg'] ?? 'Suratga olib bo‘lmadi. Qayta urinib ko‘ring.',
-              textAlign: TextAlign.center, style: K.cardP.copyWith(color: T.errText)),
-          const SizedBox(height: 12),
-          KButton(t['faceRetry'] ?? 'Qayta urinish', onTap: _retry),
+        if (ready) ...[
+          const SizedBox(height: 14),
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            for (var i = 1; i <= 4; i++) ...[
+              Container(
+                width: 16, height: 16,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _phase > i || _done ? T.green : (_phase == i ? T.blue : T.line),
+                ),
+              ),
+              if (i < 4) const SizedBox(width: 12),
+            ],
+          ]),
         ],
-        const SizedBox(height: 12),
-        KButton(t['cancel']!, variant: 'outline', onTap: () { _cancelled = true; widget.onCancel(); }),
+        const SizedBox(height: 14),
+        KButton(t['cancel']!, variant: 'outline', onTap: () { _cancelled = true; _timer?.cancel(); widget.onCancel(); }),
       ]),
     );
   }
 
-  /// Aylanuvchi skaner-halqa + cho'zilmagan (cover) doira preview + sanoq.
+  /// Cho'zilmagan doira preview + qadam ishorasi.
   Widget _circle() {
     final ps = _cam!.value.previewSize;
     final pw = ps?.width ?? 1280.0;
     final ph = ps?.height ?? 720.0;
     return SizedBox(
-      width: 360, height: 360,
+      width: 340, height: 340,
       child: Stack(alignment: Alignment.center, children: [
-        // aylanuvchi gradient halqa (skaner)
-        RotationTransition(
-          turns: _ring,
-          child: Container(
-            width: 360, height: 360,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: SweepGradient(colors: [
-                T.green.withOpacity(0.0), T.green, T.blue, T.green.withOpacity(0.0),
-              ]),
-            ),
+        Container(
+          width: 340, height: 340,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: _stepOk ? T.green : T.blue, width: 6),
           ),
         ),
-        // kamera preview — ASPECT saqlanadi (cho'zilmaydi), doiraга cover
         ClipOval(
           child: SizedBox(
-            width: 340, height: 340,
-            child: FittedBox(
-              fit: BoxFit.cover,
-              child: SizedBox(width: pw, height: ph, child: CameraPreview(_cam!)),
-            ),
+            width: 322, height: 322,
+            child: FittedBox(fit: BoxFit.cover, child: SizedBox(width: pw, height: ph, child: CameraPreview(_cam!))),
           ),
         ),
-        // yo'nalish ishorasi (jonlilik) — pastда
-        if (_hintIcon != null && _countdown == 0 && !_busy)
-          Positioned(
-            bottom: 14,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: Colors.black.withOpacity(0.34), shape: BoxShape.circle),
-              child: Icon(_hintIcon, color: Colors.white, size: 40),
-            ),
-          ),
-        // sanoq (3-2-1) markazда
-        if (_countdown > 0)
+        if (_stepOk)
           Container(
-            width: 340, height: 340, alignment: Alignment.center,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.30)),
-            child: Text('$_countdown', style: const TextStyle(fontSize: 128, fontWeight: FontWeight.w800, color: Colors.white)),
+            width: 322, height: 322, alignment: Alignment.center,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.25)),
+            child: const Icon(Icons.check_circle_rounded, color: Colors.white, size: 96),
           ),
       ]),
     );
