@@ -11,6 +11,7 @@ import '../core/env.dart';
 import '../core/i18n/strings.dart';
 import '../core/network/api_client.dart';
 import '../core/network/repository.dart';
+import '../core/services/screensaver_cache.dart';
 import '../core/services/avatar_player.dart';
 import '../core/theme/text_styles.dart';
 import '../core/theme/tokens.dart';
@@ -36,6 +37,9 @@ class _IdleAttractHostState extends ConsumerState<IdleAttractHost> {
     _t = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     // Ovozli suhbat ham "faollik" — suhbat o'rtasida zastavka ochilib ketmasin
     ref.listenManual(voiceActivityProvider, (_, __) => _idle = 0);
+    // Ilova ochilishi bilan zastavka videolarini LOKAL keshlab qo'yamiz (birinchi
+    // zastavka darhol ko'rinsin; server yangi qo'shsa/o'chirsa keyingi tekshiruvда aks etadi).
+    Future.microtask(() => ref.read(screensaverCacheProvider.future));
   }
 
   void _setAttract(bool on) {
@@ -77,7 +81,27 @@ class _IdleAttractHostState extends ConsumerState<IdleAttractHost> {
       child: Stack(
         children: [
           widget.child,
-          if (_attract) _AttractScreen(onTouch: _wake),
+          // Zastavka — asosiy menyu bilan BIR XIL 1080×1920 letterbox ichida (butun
+          // landscape ekranга cho'zilmaydi; chetlari qora). Material = sariq-chiziq (underline) yo'q.
+          if (_attract)
+            Positioned.fill(
+              child: ColoredBox(
+                color: T.letterbox,
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: SizedBox(
+                      width: Env.canvasW,
+                      height: Env.canvasH,
+                      child: Material(
+                        color: T.navy2,
+                        child: _AttractScreen(onTouch: _wake),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -108,7 +132,7 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
   bool _showCurFx = false;    // yakka video: har aylanishда joriy videoга animatsiya
   StreamSubscription<bool>? _doneSub;
   final _rnd = math.Random();
-  late final AnimationController _fxA = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200));
+  late final AnimationController _fxA = AnimationController(vsync: this, duration: const Duration(milliseconds: 2500));
 
   @override
   void initState() {
@@ -148,8 +172,8 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
     try {
       if (!AvatarPlayer.supported) {
         if (!Platform.isLinux) return;
-        // Linux: ro'yxatni olib, tashqi mpv bilan ko'rsatamiz
-        _urls = await ref.refresh(screensaverProvider.future).timeout(const Duration(seconds: 6));
+        // Linux: LOKAL keshlangan fayllarni olib, tashqi mpv bilan ko'rsatamiz
+        _urls = await ref.refresh(screensaverCacheProvider.future).timeout(const Duration(seconds: 60));
         if (_urls.isEmpty || !mounted) return;
         await _startMpvLinux();
         return;
@@ -158,10 +182,10 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
       return; // mpv yo'q/xato — gradient-logo qoladi
     }
     try {
-      // refresh: birinchi urinishda tarmoq bo'lmasa bo'sh ro'yxat KESHLANIB
-      // qolmasin; admin yangi video qo'shsa restart'siz yetib kelsin
-      _urls = await ref.refresh(screensaverProvider.future).timeout(const Duration(seconds: 8));
-      if (_urls.isEmpty || !mounted) { _log('video ro\'yxati bo\'sh'); return; }
+      // LOKAL kesh: server ro'yxatini oladi, yangisini yuklab qo'yadi, o'chirilganini o'chiradi,
+      // LOKAL fayl yo'llarини qaytaradi (internetdan emas, diskdan o'ynaydi — tez + barqaror).
+      _urls = await ref.refresh(screensaverCacheProvider.future).timeout(const Duration(seconds: 60));
+      if (_urls.isEmpty || !mounted) { _log('video ro\'yxati bo\'sh (lokal kesh)'); return; }
       final p = Player();
       _cur = p;
       _curC = VideoController(p);
