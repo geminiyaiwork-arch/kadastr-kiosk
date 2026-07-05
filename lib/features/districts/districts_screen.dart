@@ -184,13 +184,15 @@ class _DistTile extends StatelessWidget {
   }
 }
 
-/// Butun Andijon viloyati — barcha tumanlar poligoni + bosiladigan markerlar.
+/// Butun Andijon viloyati — barcha tumanlar poligoni + bosiladigan markerlar + info.
 class _RegionMap extends ConsumerWidget {
   const _RegionMap();
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final t = ref.watch(trProvider);
     final geo = ref.watch(districtGeoProvider).asData?.value ?? const {};
     final tp = ref.watch(tileProviderProvider).asData?.value;
+    final list = ref.watch(districtsProvider).asData?.value ?? const <District>[];
     if (tp == null || geo.isEmpty) {
       return const SizedBox(height: 540, child: Center(child: CircularProgressIndicator(color: T.green)));
     }
@@ -198,10 +200,14 @@ class _RegionMap extends ConsumerWidget {
     for (final g in geo.values) {
       if (g.poly != null) allPts.addAll(g.poly!); else allPts.add(g.center);
     }
-    return ClipRRect(
+    var auk = 0, ariz = 0, cities = 0;
+    for (final d in list) { auk += d.auksion; ariz += d.arizalar; if (d.isCity) cities++; }
+    final tumans = list.isEmpty ? geo.length : list.length - cities;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      ClipRRect(
       borderRadius: BorderRadius.circular(20),
       child: Container(
-        height: 620,
+        height: 560,
         decoration: BoxDecoration(border: Border.all(color: T.line), borderRadius: BorderRadius.circular(20)),
         child: FlutterMap(
           options: MapOptions(
@@ -243,8 +249,52 @@ class _RegionMap extends ConsumerWidget {
           ],
         ),
       ),
-    );
+      ),
+      const SizedBox(height: 14),
+      Container(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+        decoration: BoxDecoration(
+          color: Colors.white, borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: T.line),
+          boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 16, offset: Offset(0, 5))],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(
+              width: 44, height: 44, alignment: Alignment.center,
+              decoration: BoxDecoration(color: T.greenTint, borderRadius: BorderRadius.circular(12)),
+              child: const Icon(Icons.map_rounded, color: T.green, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Text(t['distRegionTitle'] ?? 'Andijon viloyati',
+                style: const TextStyle(color: T.navy, fontSize: 23, fontWeight: FontWeight.w800)),
+          ]),
+          const SizedBox(height: 16),
+          Row(children: [
+            _rstat(Icons.location_city_rounded, '$tumans', t['distTumans'] ?? 'tuman'),
+            _rstat(Icons.terrain_rounded, fmt(auk), t['objects'] ?? 'obyekt'),
+            _rstat(Icons.description_rounded, fmt(ariz), t['applications'] ?? 'ariza'),
+          ]),
+          const SizedBox(height: 14),
+          Row(children: [
+            const Icon(Icons.touch_app_rounded, color: T.muted, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text(t['distMapHint'] ?? 'Tuman haqida ma’lumot uchun xaritadagi belgini bosing',
+                style: K.pgSub)),
+          ]),
+        ]),
+      ),
+    ]);
   }
+
+  Widget _rstat(IconData ic, String value, String label) => Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(ic, color: T.green, size: 24),
+          const SizedBox(height: 6),
+          Text(value, style: const TextStyle(color: T.navy, fontSize: 28, fontWeight: FontWeight.w800)),
+          Text(label, style: K.pgSub),
+        ]),
+      );
 }
 
 // ─────────────────────────── DETAL ───────────────────────────
