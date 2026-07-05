@@ -7,9 +7,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../core/env.dart';
+import '../core/i18n/strings.dart';
 import '../core/network/api_client.dart';
 import '../core/theme/tokens.dart';
 import 'vk_controller.dart';
+import 'vk_fields.dart';
 import 'vk_settings.dart';
 
 /// Ekran klaviaturasi — SURILADIGAN (istalgan joyga), sozlanadigan (rang/o'lcham/
@@ -23,6 +25,7 @@ class VkOverlay extends ConsumerStatefulWidget {
 class _VkOverlayState extends ConsumerState<VkOverlay> {
   Offset? _drag; // sudrash paytidagi lokal joy (tugagach settings'ga saqlanadi)
   bool _settings = false;
+  bool _userDismissed = false; // foydalanuvchi ✕ bosса — shu sahifада qayta auto-ochilmaydi
   // QR telefon-pult
   String? _kbToken;
   bool _kbOn = false;
@@ -68,6 +71,12 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
         final m = Map<String, dynamic>.from(r.data as Map);
         if (m['hello'] == true) {
           _onKbConnect();
+        } else if (m['action'] == 'enter') {
+          _onKbConnect();
+          ref.read(vkProvider.notifier).enter(); // telefon Enter → submit
+        } else if (m['action'] == 'tab') {
+          _onKbConnect();
+          _focusNextField(); // telefon Tab → keyingi input
         } else if (m['text'] != null) {
           _onKbConnect();
           ref.read(vkProvider.notifier).setRemoteText('${m['text']}');
@@ -91,6 +100,22 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
     ref.read(dioProvider).post('/kb/cmd', data: {'s': tok, 'cmd': 'clear'}).then((_) {}, onError: (_) {});
   }
 
+  // Keyingi inputга o'tish (registry tartibi bo'yicha).
+  void _focusNextField() {
+    final fields = ref.read(vkFieldsProvider);
+    if (fields.isEmpty) return;
+    final cur = ref.read(vkProvider).target;
+    final idx = fields.indexWhere((e) => e.controller == cur);
+    final next = fields[(idx + 1) % fields.length];
+    ref.read(vkProvider.notifier).show(next.controller, lang: ref.read(localeProvider), onEnter: next.onEnter);
+  }
+
+  // Foydalanuvchi ✕ bosди — yashiramiz va shu sahifада auto-ochilmaydi.
+  void _dismiss() {
+    _userDismissed = true;
+    ref.read(vkProvider.notifier).hide();
+  }
+
   @override
   void dispose() {
     _kbOn = false;
@@ -108,6 +133,22 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
     });
     ref.listen<VkSettings>(vkSettingsProvider, (prev, next) {
       if (next.pos == null && _drag != null && mounted) setState(() => _drag = null);
+    });
+    // AUTO ochilish/yopilish: sahifада input bor bo'lsa klaviatura o'zi ochiladi;
+    // input yo'q (bosh sahifа/orqа) bo'lsa o'zi yopiladi.
+    ref.listen<List<VkFieldReg>>(vkFieldsProvider, (prev, next) {
+      if (next.isEmpty) {
+        _userDismissed = false;
+        if (ref.read(vkProvider).visible) ref.read(vkProvider.notifier).hide();
+      } else if ((prev == null || prev.isEmpty) && !_userDismissed && !ref.read(vkProvider).visible) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _userDismissed) return;
+          final f = ref.read(vkFieldsProvider);
+          if (f.isNotEmpty && !ref.read(vkProvider).visible) {
+            ref.read(vkProvider.notifier).show(f.first.controller, lang: ref.read(localeProvider), onEnter: f.first.onEnter);
+          }
+        });
+      }
     });
 
     if (!vk.visible) return const SizedBox.shrink();
@@ -159,7 +200,7 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
                       ),
                       _Fn(label: '📋', color: T.blue, onTap: c.paste),
                       const SizedBox(width: 8),
-                      _Fn(label: '✕', color: T.recRed, onTap: c.hide),
+                      _Fn(label: '✕', color: T.recRed, onTap: _dismiss),
                     ],
                   ),
                 ),

@@ -265,7 +265,7 @@ class _PropertyScreenState extends ConsumerState<PropertyScreen> {
                     ),
                 ]),
                 const SizedBox(height: 16),
-                KField(controller: _in, hint: hint),
+                KField(controller: _in, hint: hint, onEnter: () => _check(t)),
                 const SizedBox(height: 16),
                 // CAPTCHA — rasm + yangilash + kiritish (davreestr himoyasi)
                 Row(children: [
@@ -301,7 +301,7 @@ class _PropertyScreenState extends ConsumerState<PropertyScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(child: KField(controller: _cap, hint: t['propCapHint'])),
+                  Expanded(child: KField(controller: _cap, hint: t['propCapHint'], onEnter: () => _check(t))),
                 ]),
                 const SizedBox(height: 16),
                 KButton(_loading ? '…' : t['propBtn'], onTap: () => _loading ? null : _check(t)),

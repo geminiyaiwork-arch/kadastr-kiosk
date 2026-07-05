@@ -5,10 +5,12 @@ import '../../core/i18n/strings.dart';
 import '../../core/theme/text_styles.dart';
 import '../../core/theme/tokens.dart';
 import '../../shell/vk_controller.dart';
+import '../../shell/vk_fields.dart';
 
 /// Styled text field that drives the custom on-screen keyboard (readOnly so the
 /// native IME never pops; edited via VkOverlay). Web .f-input / .f-label.
-class KField extends ConsumerWidget {
+/// Ochilганда registry'ga yoziladi (Tab-navigatsiya + auto-ochilish uchun).
+class KField extends ConsumerStatefulWidget {
   const KField({
     super.key,
     required this.controller,
@@ -24,8 +26,32 @@ class KField extends ConsumerWidget {
   final int lines;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<KField> createState() => _KFieldState();
+}
+
+class _KFieldState extends ConsumerState<KField> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(vkFieldsProvider.notifier).register(VkFieldReg(widget.controller, widget.onEnter));
+    });
+  }
+
+  @override
+  void dispose() {
+    ref.read(vkFieldsProvider.notifier).unregister(widget.controller);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final lang = ref.watch(localeProvider);
+    final label = widget.label;
+    final hint = widget.hint;
+    final controller = widget.controller;
+    final lines = widget.lines;
+    final onEnter = widget.onEnter;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
