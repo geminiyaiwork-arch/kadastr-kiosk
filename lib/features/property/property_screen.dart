@@ -101,50 +101,41 @@ class _PropertyScreenState extends ConsumerState<PropertyScreen> {
     }
   }
 
-  /// davreestr javobini o'qib label:value ko'rsatadi (struktura moslashuvchan — real
-  /// javobni ko'rib keyin aniq maydonlarga moslash mumkin).
+  /// davreestr natijasi: {title (kadastr raqami), location (manzil), fields:[{label,value}]}.
   Widget _buildResult(Map<String, dynamic> t, dynamic data) {
+    final m = (data is Map) ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+    final title = '${m['title'] ?? ''}'.trim();
+    final location = '${m['location'] ?? ''}'.trim();
     final rows = <(String, String)>[];
-    void flatten(dynamic v) {
-      if (v is Map) {
-        v.forEach((k, val) {
-          if (val is Map || val is List) {
-            flatten(val);
-          } else if (val != null && '$val'.trim().isNotEmpty && '$val' != 'null') {
-            rows.add((_pretty('$k'), _clean('$val')));
-          }
-        });
-      } else if (v is List) {
-        for (final item in v) {
-          flatten(item);
-        }
+    for (final f in (m['fields'] as List? ?? const [])) {
+      if (f is Map) {
+        final l = '${f['label'] ?? ''}'.trim();
+        final v = '${f['value'] ?? ''}'.trim();
+        if (l.isNotEmpty && v.isNotEmpty) rows.add((l, v));
       }
     }
-
-    flatten(data);
-    if (rows.isEmpty) {
+    if (title.isEmpty && rows.isEmpty) {
       return KCard(accent: const Color(0xFFE8A317), child: Text(t['propNotFound'], style: K.cardP));
     }
     return KCard(
       accent: T.green,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(t['propResT'], style: K.cardH),
-        const SizedBox(height: 12),
-        KvRows(rows.take(30).toList()),
+        Text(t['propResT'], style: K.pgSub),
+        if (title.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(title, style: K.cardH),
+        ],
+        if (location.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(location, style: K.pgSub.copyWith(color: T.blue, fontWeight: FontWeight.w600)),
+        ],
+        const SizedBox(height: 14),
+        KvRows(rows),
         const SizedBox(height: 10),
         Text(t['propReestr'], style: K.pgSub),
       ]),
     );
   }
-
-  String _pretty(String k) {
-    final s = k.replaceAll('_', ' ').trim();
-    if (s.isEmpty) return k;
-    return s[0].toUpperCase() + s.substring(1);
-  }
-
-  // HTML teglari kelib qolsa tozalaymiz (davreestr ba'zan matnni teg bilan qaytarishi mumkin)
-  String _clean(String v) => v.replaceAll(RegExp(r'<[^>]+>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 
   @override
   Widget build(BuildContext context) {
