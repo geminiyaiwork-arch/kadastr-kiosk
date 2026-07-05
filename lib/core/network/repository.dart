@@ -90,6 +90,12 @@ final phonesProvider = FutureProvider<List<PhoneEntry>>((ref) async =>
 final employeesProvider = FutureProvider.autoDispose<List<Employee>>((ref) async =>
     _list((await ref.read(dioProvider).get('/employees')).data, Employee.fromJson));
 
+/// Bo'limlar — murojaat bo'lim tanlash.
+final departmentsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  final r = await ref.read(dioProvider).get('/departments');
+  return ((r.data as List?) ?? const []).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+});
+
 final receptionProvider = FutureProvider<List<ReceptionManager>>((ref) async =>
     _list((await ref.read(dioProvider).get('/reception')).data, ReceptionManager.fromJson));
 
