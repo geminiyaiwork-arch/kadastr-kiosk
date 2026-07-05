@@ -1,7 +1,7 @@
 ; Inno Setup script — single-file installer for the Kadastr Kiosk (Windows)
 ; Versiya CI'dan /DMyAppVersion=... orqali beriladi (pubspec'ga mos). Yo'q bo'lsa — default.
 #ifndef MyAppVersion
-  #define MyAppVersion "1.8.31"
+  #define MyAppVersion "1.8.32"
 #endif
 [Setup]
 AppName=Kadastr Kiosk

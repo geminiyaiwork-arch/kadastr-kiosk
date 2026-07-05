@@ -241,36 +241,102 @@ class _XatlovScreenState extends ConsumerState<XatlovScreen> {
   Widget _listView(Map<String, dynamic> d, List dist, String? mfyK, String? objK, String? xatK) {
     final total = Map<String, dynamic>.from((d['total'] as Map?) ?? const {});
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      KCard(accent: T.green, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('${d['region'] ?? 'Андижон вилояти'} — жами', style: K.cardH.copyWith(color: T.green)),
-        if ('${d['asOf'] ?? ''}'.isNotEmpty)
-          Padding(padding: const EdgeInsets.only(top: 4), child: Text('Sana: ${d['asOf']}', style: K.pgSub)),
-        const SizedBox(height: 14),
+      // Viloyat JAMI — yashil chegarali karta + KPI plitkalar
+      _bordered(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.fact_check_rounded, color: T.green, size: 40),
+          const SizedBox(width: 14),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('937-QONUN — XATLOV', style: TextStyle(color: T.green, fontSize: 15, fontWeight: FontWeight.w800, letterSpacing: 1)),
+            Text('${d['region'] ?? 'Andijon viloyati'} — jami', style: const TextStyle(color: T.navy, fontSize: 26, fontWeight: FontWeight.w800)),
+            if ('${d['asOf'] ?? ''}'.isNotEmpty) Text('Sana: ${d['asOf']}', style: K.pgSub),
+          ])),
+        ]),
+        const SizedBox(height: 16),
         Row(children: [
-          _kpi('МФЙ', _val(total, mfyK)),
-          _kpi('Объектлар', _val(total, objK)),
-          _kpi('Хатлов', _val(total, xatK)),
+          _kpiTile(Icons.holiday_village_rounded, 'MFY', _val(total, mfyK), T.green),
+          _kpiTile(Icons.apartment_rounded, 'Obyektlar', _val(total, objK), T.blue),
+          _kpiTile(Icons.checklist_rtl_rounded, 'Xatlov', _val(total, xatK), T.green),
         ]),
       ])),
+      const SizedBox(height: 8),
       for (final raw in dist)
         Builder(builder: (_) {
           final x = Map<String, dynamic>.from(raw as Map);
           final v = Map<String, dynamic>.from((x['values'] as Map?) ?? const {});
-          return GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => setState(() => _sel = '${x['code']}'),
-            child: KCard(child: Row(children: [
-              Expanded(child: Text('${x['name']}', style: K.cardH)),
-              _mini('МФЙ', _val(v, mfyK)),
-              _mini('Объект', _val(v, objK)),
-              _mini('Хатлов', _val(v, xatK)),
-              const SizedBox(width: 8),
-              const Icon(Icons.chevron_right_rounded, size: 42, color: T.muted),
-            ])),
-          );
+          return _districtTile('${x['name']}', _val(v, mfyK), _val(v, objK), _val(v, xatK), () => setState(() => _sel = '${x['code']}'));
         }),
     ]);
   }
+
+  // Yashil (yoki ko'k) chap-chegarali oq karta — Ko'chmas mulk natijasi uslubida.
+  Widget _bordered({required Widget child, Color accent = T.green}) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: T.line),
+          boxShadow: const [BoxShadow(color: Color(0x12000000), blurRadius: 22, offset: Offset(0, 8))],
+        ),
+        child: IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Container(width: 7, color: accent),
+            Expanded(child: Padding(padding: const EdgeInsets.fromLTRB(22, 20, 22, 20), child: child)),
+          ]),
+        ),
+      );
+
+  Widget _kpiTile(IconData ic, String label, String value, Color color) => Expanded(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 5),
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+          decoration: BoxDecoration(color: color.withOpacity(0.09), borderRadius: BorderRadius.circular(16)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(ic, color: color, size: 26),
+            const SizedBox(height: 8),
+            Text(value, style: const TextStyle(color: T.navy, fontSize: 30, fontWeight: FontWeight.w800)),
+            Text(label, style: K.pgSub),
+          ]),
+        ),
+      );
+
+  Widget _districtTile(String name, String mfy, String obj, String xat, VoidCallback onTap) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: T.line),
+            boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 16, offset: Offset(0, 5))],
+          ),
+          child: Row(children: [
+            Container(
+              width: 52, height: 52, alignment: Alignment.center,
+              decoration: BoxDecoration(color: T.greenTint, borderRadius: BorderRadius.circular(14)),
+              child: const Icon(Icons.location_city_rounded, color: T.green, size: 28),
+            ),
+            const SizedBox(width: 16),
+            Expanded(child: Text(name, style: const TextStyle(color: T.navy, fontSize: 21, fontWeight: FontWeight.w700))),
+            _stat('MFY', mfy),
+            _stat('Obyekt', obj),
+            _stat('Xatlov', xat),
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right_rounded, size: 40, color: T.muted),
+          ]),
+        ),
+      );
+
+  Widget _stat(String l, String v) => Padding(
+        padding: const EdgeInsets.only(left: 20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(v, style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800, color: T.navy)),
+          Text(l, style: const TextStyle(fontSize: 14, color: T.muted)),
+        ]),
+      );
 
   Widget _detail(Map<String, dynamic> dd, List cols) {
     final v = Map<String, dynamic>.from((dd['values'] as Map?) ?? const {});
@@ -282,50 +348,37 @@ class _XatlovScreenState extends ConsumerState<XatlovScreen> {
       groups.putIfAbsent(g, () { order.add(g); return <Map>[]; }).add(c);
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Padding(padding: const EdgeInsets.only(bottom: 8), child: Row(children: [
+      Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [
         GestureDetector(
           onTap: () => setState(() => _sel = null),
           child: Container(
-            width: 72, height: 72, alignment: Alignment.center,
+            width: 68, height: 68, alignment: Alignment.center,
             decoration: BoxDecoration(color: Colors.white, border: Border.all(color: T.line, width: 1.5), borderRadius: BorderRadius.circular(16), boxShadow: T.shadow),
-            child: const Text('‹', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, color: T.navy)),
+            child: const Icon(Icons.chevron_left_rounded, size: 42, color: T.navy),
           ),
         ),
         const SizedBox(width: 16),
+        const Icon(Icons.location_city_rounded, color: T.green, size: 34),
+        const SizedBox(width: 10),
         Expanded(child: Text('${dd['name']}', style: K.pgTitle)),
       ])),
       for (final g in order) ...[
-        Padding(padding: const EdgeInsets.fromLTRB(4, 14, 4, 6), child: Text(g, style: K.cardH.copyWith(color: T.blue))),
-        KCard(child: Column(children: [
+        Padding(padding: const EdgeInsets.fromLTRB(6, 12, 6, 8), child: Text(g, style: const TextStyle(color: T.blue, fontSize: 20, fontWeight: FontWeight.w800))),
+        _bordered(accent: T.blue, child: Column(children: [
           for (var i = 0; i < groups[g]!.length; i++)
             Container(
-              padding: const EdgeInsets.symmetric(vertical: 12),
+              padding: const EdgeInsets.symmetric(vertical: 13),
               decoration: BoxDecoration(border: i == groups[g]!.length - 1 ? null : const Border(bottom: BorderSide(color: T.line))),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(child: Text('${groups[g]![i]['label']}', style: K.cardP)),
-                const SizedBox(width: 14),
-                Text(_val(v, groups[g]![i]['key'] as String?), style: K.cardP.copyWith(fontWeight: FontWeight.w800, color: T.navy)),
+              child: Row(children: [
+                Expanded(flex: 5, child: Text('${groups[g]![i]['label']}', style: const TextStyle(color: T.navy, fontSize: 18, fontWeight: FontWeight.w500))),
+                const SizedBox(width: 12),
+                Expanded(flex: 3, child: Text(_val(v, groups[g]![i]['key'] as String?), textAlign: TextAlign.right, style: const TextStyle(color: T.navy, fontSize: 21, fontWeight: FontWeight.w800))),
               ]),
             ),
         ])),
       ],
     ]);
   }
-
-  Widget _kpi(String l, String v) => Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(v, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: T.navy)),
-          Text(l, style: K.pgSub),
-        ]),
-      );
-
-  Widget _mini(String l, String v) => Padding(
-        padding: const EdgeInsets.only(left: 18),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text(v, style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w800, color: T.navy)),
-          Text(l, style: const TextStyle(fontSize: 16, color: T.muted)),
-        ]),
-      );
 
   Widget _info() {
     final lang = ref.watch(localeProvider);
