@@ -14,11 +14,10 @@ import '../core/theme/tokens.dart';
 import '../router.dart';
 
 /// Idle handling: at 90s reset to home + uz; at 120s show the attract screen.
-/// Any pointer wakes it.
 ///
-/// ZASTAVKA VIDEO = Windows Media Foundation (`video_player_win`), media_kit(libmpv)
-/// O'RNIGA — o'sha libmpv DLL'ini Smart App Control bloklaydi. MF-asosli plagin o'tadi.
-/// Bir videodan ikkinchisiga / har loopда — 10 xil 3D animatsiya bilan o'tadi.
+/// ZASTAVKA VIDEO = Windows Media Foundation (`video_player_win`), media_kit(libmpv) O'RNIGA.
+/// Video `setLooping(true)` bilan UZLUKSIZ o'ynaydi (ishonchli); animatsion o'tish esa ALOHIDA
+/// taymer bilan (10 xil 3D effekt playback ustidan) — playbackни BUZMAYDI.
 class IdleAttractHost extends ConsumerStatefulWidget {
   const IdleAttractHost({super.key, required this.child});
   final Widget child;
@@ -119,11 +118,11 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
   List<String> _urls = const [];
   int _idx = 0;
   int _fxKind = 0;
-  WinVideoPlayerController? _curVc, _nextVc;
+  WinVideoPlayerController? _vc;
   bool _ready = false;
   bool _muted = false;
-  bool _transing = false;
-  bool _showCurFx = false;
+  bool _showFx = false;
+  Timer? _fxTimer, _advTimer;
   final _rnd = math.Random();
 
   @override
@@ -139,93 +138,49 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
       _urls = const [];
     }
     if (!mounted || _urls.isEmpty) return;
-    await _openFirst();
+    await _open(0);
+    if (!mounted) return;
+    // Animatsion effekt — playbackдан ALOHIDA taymer (har ~10s bir 3D flourish)
+    _fxTimer = Timer.periodic(const Duration(seconds: 10), (_) => _playFx());
+    // Bir nechta video bo'lsa — har ~20s keyingisiga o'tadi
+    if (_urls.length >= 2) {
+      _advTimer = Timer.periodic(const Duration(seconds: 20), (_) => _advance());
+    }
   }
 
-  Future<void> _openFirst() async {
+  Future<void> _open(int i) async {
+    _idx = i % _urls.length;
+    final old = _vc;
+    _vc = null;
+    if (old != null) { try { await old.dispose(); } catch (_) {} }
     try {
-      final c = WinVideoPlayerController.file(File(_urls[0]));
+      final c = WinVideoPlayerController.file(File(_urls[_idx]));
       await c.initialize();
       if (!mounted || !c.value.isInitialized) { try { await c.dispose(); } catch (_) {} return; }
+      c.setLooping(true); // UZLUKSIZ — completion-detection'ga tayanmaymiz (ishonchli)
       await c.setVolume(_muted ? 0 : 1.0);
-      c.addListener(_onCurTick);
       await c.play();
-      setState(() { _curVc = c; _ready = true; });
+      setState(() { _vc = c; _ready = true; });
     } catch (_) {}
   }
 
-  bool _ended(WinVideoPlayerController c) {
-    final v = c.value;
-    return v.isInitialized && v.duration > Duration.zero && !v.isPlaying && v.position >= v.duration;
+  Future<void> _playFx() async {
+    if (!mounted || _showFx || _vc == null) return;
+    _fxKind = _rnd.nextInt(10);
+    setState(() => _showFx = true);
+    try { await _fxA.forward(from: 0); } catch (_) {}
+    if (mounted) setState(() => _showFx = false);
   }
 
-  void _onCurTick() {
-    final c = _curVc;
-    if (c == null || _transing) return;
-    if (_ended(c)) {
-      if (_urls.length >= 2) {
-        _advance();
-      } else {
-        _loopSingleWithFx();
-      }
-    }
-  }
-
-  /// Yakka video: tugagach boshidan + TASODIFIY animatsiya (10 uslub).
-  Future<void> _loopSingleWithFx() async {
-    if (_transing || !mounted || _curVc == null) return;
-    _transing = true;
-    try {
-      _fxKind = _rnd.nextInt(10);
-      await _curVc!.seekTo(Duration.zero);
-      await _curVc!.play();
-      if (!mounted) return;
-      setState(() => _showCurFx = true);
-      await _fxA.forward(from: 0);
-    } catch (_) {
-    } finally {
-      if (mounted) setState(() => _showCurFx = false);
-      _transing = false;
-    }
-  }
-
-  /// Keyingi videoga TASODIFIY 3D animatsiya bilan o'tish.
   Future<void> _advance() async {
-    if (_transing || !mounted || _urls.length < 2) return;
-    _transing = true;
-    WinVideoPlayerController? p;
-    try {
-      _idx = (_idx + 1) % _urls.length;
-      p = WinVideoPlayerController.file(File(_urls[_idx]));
-      _nextVc = p;
-      await p.initialize();
-      if (!mounted || !p.value.isInitialized) { try { await p.dispose(); } catch (_) {} _nextVc = null; return; }
-      await p.setVolume(_muted ? 0 : 1.0);
-      p.addListener(_onCurTick);
-      await p.play();
-      try { await _curVc?.setVolume(0); } catch (_) {} // ikki ovoz aralashmasin
-      if (!mounted) return;
-      _fxKind = _rnd.nextInt(10);
-      setState(() {});
-      await _fxA.forward(from: 0);
-      if (!mounted) return;
-      final old = _curVc;
-      old?.removeListener(_onCurTick);
-      _curVc = _nextVc;
-      _nextVc = null;
-      setState(() {});
-      try { await old?.dispose(); } catch (_) {}
-    } catch (_) {
-    } finally {
-      _transing = false;
-    }
+    if (!mounted || _urls.length < 2 || _showFx) return;
+    await _open(_idx + 1);
+    _playFx();
   }
 
   void _toggleMute() {
     setState(() => _muted = !_muted);
-    final v = _muted ? 0.0 : 1.0;
-    try { _curVc?.setVolume(v); } catch (_) {}
-    try { _nextVc?.setVolume(v); } catch (_) {}
+    try { _vc?.setVolume(_muted ? 0 : 1.0); } catch (_) {}
   }
 
   void _startMenu() {
@@ -244,20 +199,18 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
 
   @override
   void dispose() {
+    _fxTimer?.cancel();
+    _advTimer?.cancel();
     _c.dispose();
     _fxA.dispose();
-    try { _curVc?.removeListener(_onCurTick); } catch (_) {}
-    try { _curVc?.dispose(); } catch (_) {}
-    try { _nextVc?.removeListener(_onCurTick); } catch (_) {}
-    try { _nextVc?.dispose(); } catch (_) {}
+    try { _vc?.dispose(); } catch (_) {}
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final t = ref.watch(trProvider);
-    final cur = _curVc;
-    final next = _nextVc;
+    final cur = _vc;
     return GestureDetector(
       onTap: widget.onTouch,
       child: Container(
@@ -268,13 +221,8 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // JORIY video — ekranни to'ldiradi (cover); yakka-video aylanishда animatsiya
             if (_ready && cur != null && cur.value.isInitialized)
-              _showCurFx ? _TransitionFx(kind: _fxKind, anim: _fxA, child: _video(cur)) : _video(cur),
-            // KIRUVCHI video (ko'p video) — 10 xil 3D animatsiyadan tasodifiysi bilan
-            if (next != null && next.value.isInitialized)
-              _TransitionFx(kind: _fxKind, anim: _fxA, child: _video(next)),
-            // Video tayyor emas — nafas oluvchi logo
+              _showFx ? _TransitionFx(kind: _fxKind, anim: _fxA, child: _video(cur)) : _video(cur),
             if (!_ready)
               Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -315,7 +263,7 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
   }
 }
 
-/// Qorong'i yarim-shaffof pill-knopka (ikonка + matn).
+/// Qorong'i yarim-shaffof pill-knopka.
 class _PillBtn extends StatelessWidget {
   const _PillBtn({required this.icon, required this.label, required this.onTap});
   final IconData icon;
@@ -346,7 +294,7 @@ class _PillBtn extends StatelessWidget {
   }
 }
 
-/// Soat + sana (yuqori o'ng burchak) — har soniyada yangilanadi.
+/// Soat + sana (yuqori o'ng burchak).
 class _ClockWidget extends StatefulWidget {
   const _ClockWidget();
   @override
@@ -393,9 +341,7 @@ class _ClockWidgetState extends State<_ClockWidget> {
   }
 }
 
-/// 10 xil video-o'tish animatsiyasi (kiruvchi videoga qo'llanadi):
-/// 0 xira, 1 o'ngdan 3D, 2 pastdan 3D, 3 kattalashish, 4 eshik-burilish,
-/// 5 aylanib-kirish, 6 doira, 7 jalyuzi, 8 shaxmat-kublar, 9 shamol-barglar.
+/// 10 xil 3D animatsiya (video ustidan davriy qo'llanadi).
 class _TransitionFx extends StatelessWidget {
   const _TransitionFx({required this.kind, required this.anim, required this.child});
   final int kind;

@@ -48,6 +48,7 @@ class _FaceCaptureState extends State<FaceCapture> {
   int _turnSign = 0;
   bool _blinkClosed = false;
   bool _stepOk = false;
+  int _straightCount = 0; // ketma-ket turg'un frontal kadrlar (bulanik surat oldini oladi)
   String _hint = '';
 
   @override
@@ -100,7 +101,7 @@ class _FaceCaptureState extends State<FaceCapture> {
       final cams = await availableCameras();
       if (cams.isEmpty) { setState(() => _noCamera = true); return; }
       final front = cams.firstWhere((c) => c.lensDirection == CameraLensDirection.front, orElse: () => cams.first);
-      final c = CameraController(front, ResolutionPreset.medium, enableAudio: false);
+      final c = CameraController(front, ResolutionPreset.high, enableAudio: false);
       await c.initialize();
       if (!mounted) return;
       setState(() { _cam = c; _hint = widget.t['faceCalib'] ?? 'Tayyorlanmoqda…'; });
@@ -172,13 +173,21 @@ class _FaceCaptureState extends State<FaceCapture> {
         if (ear < 0.17) _blinkClosed = true;
         if (_blinkClosed && ear > 0.26) _advance(4);
         break;
-      case 4: // to'g'ri qarang → SURATGA OL + yubor
-        setState(() => _hint = t['faceHold'] ?? 'To‘g‘ri qarang');
-        if ((yaw - _baseYaw).abs() < 9 && (pitch - _basePitch).abs() < 13 && ear > 0.2) {
-          _done = true;
-          _timer?.cancel();
-          setState(() => _hint = t['verifying'] ?? 'Tekshirilmoqda…');
-          widget.onCaptured('data:image/jpeg;base64,${base64Encode(bytes)}');
+      case 4: // to'g'ri qarang + QIMIRLAMANG → SHARP frontal kadr → MyID
+        final steady = (yaw - _baseYaw).abs() < 9 && (pitch - _basePitch).abs() < 13 && ear > 0.2;
+        if (steady) {
+          _straightCount++;
+          // 3 ketma-ket turg'un kadr = bosh qimirlamayapti → surat aniq (bulanik emas)
+          setState(() => _hint = t['faceStill'] ?? 'Qimirlamang…');
+          if (_straightCount >= 3) {
+            _done = true;
+            _timer?.cancel();
+            setState(() => _hint = t['verifying'] ?? 'Tekshirilmoqda…');
+            widget.onCaptured('data:image/jpeg;base64,${base64Encode(bytes)}');
+          }
+        } else {
+          _straightCount = 0;
+          setState(() => _hint = t['faceHold'] ?? 'To‘g‘ri qarang');
         }
         break;
     }
