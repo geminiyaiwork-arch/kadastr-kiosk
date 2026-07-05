@@ -1,7 +1,7 @@
 name: kadastr_kiosk
 description: "Davlat Kadastrlari Palatasi — Info Kiosk (Flutter Windows desktop)."
 publish_to: 'none'
-version: 1.9.3+63
+version: 1.9.4+64
 
 environment:
   sdk: '>=3.4.3 <4.0.0'
@@ -42,6 +42,9 @@ dependencies:
   path_provider: ^2.1.0
   # Klaviatura sozlamalari (ranglar/o'lcham/joy) — saqlanadi va keyingi safar tiklanadi
   shared_preferences: ^2.2.0
+  # Tuman xaritasi (OSM tiles) — tuman chegarasi/markerini ko'rsatish
+  flutter_map: ^6.2.1
+  latlong2: ^0.9.1
   cupertino_icons: ^1.0.6
 
 dev_dependencies:
@@ -54,6 +57,7 @@ flutter:
   assets:
     - assets/images/
     - assets/content/
+    - assets/geo/
   fonts:
     - family: Inter
       fonts:
