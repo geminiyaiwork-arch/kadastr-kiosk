@@ -55,7 +55,8 @@ class _Canvas extends StatelessWidget {
                 children: [
                   Positioned.fill(child: child),
                   // const RemoteQrOverlay(), // telefon-QR pult — vaqtincha olib tashlandi (joyi keyin aytiladi)
-                  const Positioned(left: 0, right: 0, bottom: 0, child: VkOverlay()),
+                  // VkOverlay o'zi Positioned qaytaradi (suriladigan) — Stack'ga to'g'ridan-to'g'ri bola
+                  const VkOverlay(),
                 ],
               ),
             ),

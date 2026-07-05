@@ -1,7 +1,7 @@
 name: kadastr_kiosk
 description: "Davlat Kadastrlari Palatasi — Info Kiosk (Flutter Windows desktop)."
 publish_to: 'none'
-version: 1.8.26+42
+version: 1.8.27+43
 
 environment:
   sdk: '>=3.4.3 <4.0.0'
@@ -39,6 +39,8 @@ dependencies:
   camera_windows: ^0.2.6
   # Zastavka videolarini lokal keshlash uchun ilova papkasi (Application Support dir)
   path_provider: ^2.1.0
+  # Klaviatura sozlamalari (ranglar/o'lcham/joy) — saqlanadi va keyingi safar tiklanadi
+  shared_preferences: ^2.2.0
   cupertino_icons: ^1.0.6
 
 dev_dependencies:
