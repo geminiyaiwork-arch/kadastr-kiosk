@@ -67,6 +67,11 @@ class _IdleAttractHostState extends ConsumerState<IdleAttractHost> {
     if (_attract) _setAttract(false);
   }
 
+  // Har tegishда FAQAT idle-taymer tiklanadi (kiosk ishlatilayotganда zastavka
+  // ochilmasin). Zastavkani YOPISH esa faqat FONga tegilганда (_AttractScreen ички
+  // GestureDetector) — shu sabab ovoz/murojaat knopkasi bosilганда zastavka yopilmaydi.
+  void _resetIdle() => _idle = 0;
+
   @override
   void dispose() {
     _t?.cancel();
@@ -77,7 +82,7 @@ class _IdleAttractHostState extends ConsumerState<IdleAttractHost> {
   Widget build(BuildContext context) {
     return Listener(
       behavior: HitTestBehavior.translucent,
-      onPointerDown: (_) => _wake(),
+      onPointerDown: (_) => _resetIdle(),
       child: Stack(
         children: [
           widget.child,
@@ -189,7 +194,6 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
       final p = Player();
       _cur = p;
       _curC = VideoController(p);
-      await p.setVolume(_muted ? 0 : 100);
       // PlaylistMode.loop O'RNATILMAYDI — loopни o'zimiz boshqaramiz (har aylanishда animatsiya).
       _watchEnd(p);
       await p.open(Media(_urls[0]), play: true);
@@ -197,8 +201,11 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
         try { await p.dispose(); } catch (_) {}
         return;
       }
+      // OVOZ — open'дан KEYIN qo'llanadi (media_kit ba'zан open'дан oldingi setVolume'ни
+      // e'tiborsiz qoldiradi). Default _muted=false → 100 (ovoz YOQILGAN).
+      try { await p.setVolume(_muted ? 0 : 100); } catch (_) {}
       setState(() => _videoReady = true);
-      _log('video ochildi (${_urls.length} ta)');
+      _log('video ochildi (${_urls.length} ta), ovoz=${_muted ? "o'chiq" : "yoniq"}');
     } catch (e) {
       // video bo'lmadi — oddiy zastavka qoladi
       _log('xato: $e');
