@@ -86,6 +86,10 @@ final socialProvider = FutureProvider<List<SocialLink>>((ref) async =>
 final phonesProvider = FutureProvider<List<PhoneEntry>>((ref) async =>
     _list((await ref.read(dioProvider).get('/phones')).data, PhoneEntry.fromJson));
 
+/// Xodimlar (telefon-direktoriya) — kiosk Telefonlar bo'limi. autoDispose: davomat/online yangilanadi.
+final employeesProvider = FutureProvider.autoDispose<List<Employee>>((ref) async =>
+    _list((await ref.read(dioProvider).get('/employees')).data, Employee.fromJson));
+
 final receptionProvider = FutureProvider<List<ReceptionManager>>((ref) async =>
     _list((await ref.read(dioProvider).get('/reception')).data, ReceptionManager.fromJson));
 

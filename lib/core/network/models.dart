@@ -87,6 +87,28 @@ class PhoneEntry {
         name: _s(j['name']), dept: _s(j['dept']), number: _s(j['number']));
 }
 
+/// Xodim (telefon-direktoriya) — kiosk Telefonlar: rasm/ism/lavozim + davomat "ichkarida" + qo'ng'iroq.
+class Employee {
+  final int id;
+  final String name, position, dept, phone, role, photo;
+  final bool inside, online;
+  final Map<String, dynamic> features;
+  const Employee({
+    required this.id, required this.name, required this.position, required this.dept,
+    required this.phone, required this.role, required this.photo,
+    required this.inside, required this.online, required this.features,
+  });
+  bool get canVideo => features['video'] != false;
+  bool get canVoice => features['calls'] != false;
+  factory Employee.fromJson(Map<String, dynamic> j) => Employee(
+        id: (j['id'] as num?)?.toInt() ?? 0,
+        name: _s(j['name']), position: _s(j['position']), dept: _s(j['dept']),
+        phone: _s(j['phone']), role: _s(j['role']), photo: _s(j['photo']),
+        inside: j['inside'] == true, online: j['is_online'] == true,
+        features: (j['features'] is Map) ? Map<String, dynamic>.from(j['features'] as Map) : const {},
+      );
+}
+
 class ReceptionManager {
   final int id;
   final String name, position, days, hours;
