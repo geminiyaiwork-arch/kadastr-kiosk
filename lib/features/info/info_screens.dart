@@ -535,7 +535,9 @@ class _XatlovScreenState extends ConsumerState<XatlovScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          PageHead(t['pXatlov'], sub: _sel == null ? 'Andijon viloyati — tumanlar kesimida' : null),
+          // Tuman/shahar TANLANMAGAN bo'lsagina yuqori sarlavha; detalда faqat
+          // tuman nomi (o'z orqaga tugmasi bilan) qoladi — ikki sarlavha bo'lmaydi.
+          if (_sel == null) PageHead(t['pXatlov'], sub: 'Andijon viloyati — tumanlar kesimida'),
           AsyncView(async, data: (d) {
             final cols = (d['columns'] as List?) ?? const [];
             final dist = (d['districts'] as List?) ?? const [];
