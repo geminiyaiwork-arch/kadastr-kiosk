@@ -300,10 +300,10 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
     try { _next?.setVolume(v); } catch (_) {}
   }
 
-  void _startAppeal() {
-    // zastavkani yopamiz va to'g'ridan-to'g'ri Murojaat sahifasini ochamiz
+  void _startMenu() {
+    // "Boshlash" — zastavkani yopamiz va ASOSIY (bosh) menyuni ochamiz
     widget.onTouch();
-    ref.read(routerProvider).go('/appeal');
+    ref.read(routerProvider).go('/');
   }
 
   @override
@@ -370,9 +370,9 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
               left: 40,
               bottom: 48,
               child: _PillBtn(
-                icon: Icons.send_rounded,
-                label: t['attractAppeal'] ?? 'Murojaat yo‘llash',
-                onTap: _startAppeal,
+                icon: Icons.touch_app_rounded,
+                label: t['attractAppeal'] ?? 'Boshlash',
+                onTap: _startMenu,
               ),
             ),
             // Pastki-O'NG: "Ovozni o'chirish/yoqish" — faqat video bor bo'lsa
