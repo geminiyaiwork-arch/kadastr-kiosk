@@ -1,7 +1,7 @@
 name: kadastr_kiosk
 description: "Davlat Kadastrlari Palatasi — Info Kiosk (Flutter Windows desktop)."
 publish_to: 'none'
-version: 1.9.8+68
+version: 1.9.9+69
 
 environment:
   sdk: '>=3.4.3 <4.0.0'
@@ -45,6 +45,8 @@ dependencies:
   # Tuman xaritasi (OSM tiles) — tuman chegarasi/markerini ko'rsatish
   flutter_map: ^6.2.1
   latlong2: ^0.9.1
+  # WebRTC qo'ng'iroq (kiosk↔xodim). DIQQAT: libwebrtc.dll SAC bloklashi mumkin (test)
+  flutter_webrtc: ^0.11.7
   cupertino_icons: ^1.0.6
 
 dev_dependencies:

@@ -9,6 +9,7 @@ import '../../core/theme/icons.dart';
 import '../../core/theme/text_styles.dart';
 import '../../core/theme/tokens.dart';
 import '../../shell/kiosk_shell.dart';
+import '../call/call_screen.dart';
 import '../common/widgets.dart';
 
 class PhonesScreen extends ConsumerWidget {
@@ -84,13 +85,16 @@ class _EmployeeCard extends ConsumerWidget {
   final Employee e;
 
   void _call(BuildContext context, bool video) {
-    // Phase 2 (WebRTC) + xodim ilovasi ulanganda ishlaydi. Hozircha holat ko'rsatiladi.
-    final avail = e.inside || e.online;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      duration: const Duration(seconds: 2),
-      content: Text(avail
-          ? '${e.name} — ${video ? 'video' : 'ovozli'} qo‘ng‘iroq ulanmoqda…'
-          : '${e.name} hozir joyida yo‘q — keyinroq urinib ko‘ring'),
+    // WebRTC qo'ng'iroq (kiosk→xodim ilovasi). Faqat online/ichkarida bo'lsa.
+    if (!(e.inside || e.online)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        duration: const Duration(seconds: 2),
+        content: Text('${e.name} hozir joyida yo‘q — keyinroq urinib ko‘ring'),
+      ));
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => CallScreen(employeeId: e.id, name: e.name, video: video),
     ));
   }
 
