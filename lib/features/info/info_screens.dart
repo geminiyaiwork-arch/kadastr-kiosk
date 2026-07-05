@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/i18n/strings.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/models.dart';
 import '../../core/network/repository.dart';
-import '../../core/services/avatar_player.dart';
-import '../../core/services/docs_video_cache.dart';
 import '../../core/theme/text_styles.dart';
 import '../../core/util/fmt.dart';
 import '../../core/theme/tokens.dart';
@@ -69,105 +66,45 @@ class _DocSectionHead extends StatelessWidget {
       );
 }
 
-/// "Kadastr pasportini shakllantirish" video kartasi — bosilsa lokal keshdan o'ynaydi.
-/// Video Windows kiosk rejimida o'ynaydi (media_kit D3D barqaror); Linux dev'da gated.
-class _DocVideoCard extends ConsumerStatefulWidget {
+/// "Kadastr pasportini shakllantirish" — video kiosk ichida o'ynatilmaydi (media_kit/libmpv
+/// DLL'ni Smart App Control bloklaydi). Shuning uchun QR kod: fuqaro telefon kamerasi bilan
+/// skanerlab, videoni O'Z telefonida ko'radi.
+class _DocVideoCard extends ConsumerWidget {
   const _DocVideoCard();
+  static const _videoUrl = 'https://youtu.be/31Os2XQqGCw';
   @override
-  ConsumerState<_DocVideoCard> createState() => _DocVideoCardState();
-}
-
-class _DocVideoCardState extends ConsumerState<_DocVideoCard> {
-  Player? _player;
-  VideoController? _controller;
-  bool _started = false;
-
-  @override
-  void dispose() {
-    try { _player?.dispose(); } catch (_) {}
-    super.dispose();
-  }
-
-  Future<void> _play(String path) async {
-    if (_started) return;
-    if (!AvatarPlayer.supported) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(ref.read(trProvider)['docWinOnly'])),
-      );
-      return;
-    }
-    final p = Player();
-    final c = VideoController(p);
-    setState(() { _player = p; _controller = c; _started = true; });
-    try {
-      await p.setVolume(100);
-      await p.open(Media(path), play: true);
-    } catch (_) {}
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final t = ref.watch(trProvider);
-    final path = ref.watch(docsVideoProvider).asData?.value;
-
-    // Ochilgan video pleer (media_kit controls bilan)
-    if (_started && _controller != null) {
-      return Container(
-        margin: const EdgeInsets.only(bottom: 2),
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(T.rLg), boxShadow: T.shadow),
-        child: AspectRatio(
-          aspectRatio: 16 / 9,
-          child: Video(controller: _controller!, controls: AdaptiveVideoControls),
-        ),
-      );
-    }
-
-    // Poster — chiroyli gradient karta, bosilsa o'ynaydi
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: path == null ? null : () => _play(path),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 2),
-        height: 224,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(gradient: T.gNavyH, borderRadius: BorderRadius.circular(T.rLg), boxShadow: T.shadow),
-        child: Stack(children: [
-          Positioned(right: -22, bottom: -26, child: Icon(Icons.description_rounded, size: 210, color: Colors.white.withOpacity(0.06))),
-          Padding(
-            padding: const EdgeInsets.all(26),
-            child: Row(children: [
-              Container(
-                width: 94, height: 94, alignment: Alignment.center,
-                decoration: const BoxDecoration(
-                  color: Colors.white, shape: BoxShape.circle,
-                  boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 22, offset: Offset(0, 8))],
-                ),
-                child: Icon(path == null ? Icons.hourglass_bottom_rounded : Icons.play_arrow_rounded, color: T.navy, size: 58),
-              ),
-              const SizedBox(width: 24),
-              Expanded(
-                child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    const Icon(Icons.play_circle_fill_rounded, color: Color(0xFF9DC1FF), size: 20),
-                    const SizedBox(width: 8),
-                    Text(t['docVideoSub'].toUpperCase(), style: const TextStyle(color: Color(0xFF9DC1FF), fontSize: 14, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
-                  ]),
-                  const SizedBox(height: 8),
-                  Text(t['docVideoTitle'], style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w800, height: 1.15)),
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.16), borderRadius: BorderRadius.circular(30)),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 22),
-                      const SizedBox(width: 6),
-                      Text(path == null ? '…' : t['docPlay'], style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-                    ]),
-                  ),
-                ]),
-              ),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 2),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(gradient: T.gNavyH, borderRadius: BorderRadius.circular(T.rLg), boxShadow: T.shadow),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Row(children: [
+          Expanded(
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                const Icon(Icons.play_circle_fill_rounded, color: Color(0xFF9DC1FF), size: 20),
+                const SizedBox(width: 8),
+                Text(t['docVideoSub'].toUpperCase(), style: const TextStyle(color: Color(0xFF9DC1FF), fontSize: 14, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+              ]),
+              const SizedBox(height: 8),
+              Text(t['docVideoTitle'], style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800, height: 1.15)),
+              const SizedBox(height: 14),
+              Row(children: [
+                const Icon(Icons.qr_code_scanner_rounded, color: Colors.white70, size: 24),
+                const SizedBox(width: 10),
+                Expanded(child: Text(t['docScanQr'] ?? 'Telefon kamerangiz bilan QR kodni skanerlab, videoni ko‘ring',
+                    style: const TextStyle(color: Colors.white70, fontSize: 17, height: 1.35, fontWeight: FontWeight.w500))),
+              ]),
             ]),
+          ),
+          const SizedBox(width: 20),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            child: QrImageView(data: _videoUrl, version: QrVersions.auto, size: 150, gapless: true),
           ),
         ]),
       ),

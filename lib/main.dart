@@ -2,14 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized(); // jonli avatar video-pleeri (media_kit)
+  // media_kit (video) OLIB TASHLANDI — Smart App Control libmpv DLL'ni bloklaydi.
   await windowManager.ensureInitialized();
 
   const opts = WindowOptions(

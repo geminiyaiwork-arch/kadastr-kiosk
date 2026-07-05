@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/env.dart';
 import '../../core/i18n/strings.dart';
@@ -129,18 +128,8 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                             : null),
                   ),
                   child: Builder(builder: (context) {
-                    // GAPIRGANDA — lab-sinxron VIDEO (Wav2Lip klip); JIM turganda —
-                    // IMO-ISHORA video-loop (kiprik/qo'l); u ham bo'lmasa — rasm.
-                    final ap = ref.watch(avatarPlayerProvider);
-                    final notifier = ref.read(avatarPlayerProvider.notifier);
-                    final vctl = notifier.controller;
-                    if (enabled && ap.speaking && vctl != null) {
-                      return Video(controller: vctl, controls: NoVideoControls, fit: BoxFit.cover);
-                    }
-                    final ictl = notifier.idleController;
-                    if (enabled && ap.idleReady && ictl != null) {
-                      return Video(controller: ictl, controls: NoVideoControls, fit: BoxFit.cover);
-                    }
+                    // Video moduli olib tashlangan (SAC libmpv DLL'ni bloklaydi) —
+                    // avatar STATIK rasm sifatida ko'rsatiladi, javob TTS ovozida.
                     return (enabled && url != null)
                         ? Image.network(url,
                             fit: BoxFit.cover,
