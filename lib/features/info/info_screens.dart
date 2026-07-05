@@ -23,7 +23,6 @@ class DocsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = ref.watch(trProvider);
-    final async = ref.watch(documentsProvider);
     return KioskScaffold(
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -38,43 +37,6 @@ class DocsScreen extends ConsumerWidget {
           _DocSectionHead(Icons.folder_copy_rounded, t['docCatsTitle'], t['docCatsSub']),
           const SizedBox(height: 12),
           _DocCatList(reqLabel: t['docReqTitle']),
-
-          // 3) Narxlar va muddatlar (admin jadvali) — bo'sh bo'lsa ko'rsatilmaydi
-          AsyncView(async, data: (list) {
-            if (list.isEmpty) return const SizedBox.shrink();
-            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              const SizedBox(height: 6),
-              _DocSectionHead(Icons.payments_rounded, t['docPriceTitle'], null),
-              const SizedBox(height: 12),
-              KCard(
-                padding: EdgeInsets.zero,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(T.rCard),
-                  child: Column(children: [
-                    Container(
-                      color: T.sky,
-                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-                      child: Row(children: [
-                        Expanded(flex: 2, child: Text(t['pDocs'], style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: T.navy))),
-                        Expanded(child: Text(t['docFee'], textAlign: TextAlign.right, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: T.navy))),
-                        Expanded(child: Text(t['docTerm'], textAlign: TextAlign.right, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: T.navy))),
-                      ]),
-                    ),
-                    for (final d in list)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-                        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: T.line))),
-                        child: Row(children: [
-                          Expanded(flex: 2, child: Text(d.name, style: const TextStyle(fontSize: 20, color: T.ink))),
-                          Expanded(child: Text(d.fee, textAlign: TextAlign.right, style: const TextStyle(fontSize: 20, color: T.ink))),
-                          Expanded(child: Text(d.term, textAlign: TextAlign.right, style: const TextStyle(fontSize: 20, color: T.ink))),
-                        ]),
-                      ),
-                  ]),
-                ),
-              ),
-            ]);
-          }),
         ],
       ),
     );
@@ -573,7 +535,7 @@ class _XatlovScreenState extends ConsumerState<XatlovScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          PageHead(t['pXatlov'], sub: _sel == null ? 'Andijon viloyati — tumanlar kesimida' : 'Andijon viloyati'),
+          PageHead(t['pXatlov'], sub: _sel == null ? 'Andijon viloyati — tumanlar kesimida' : null),
           AsyncView(async, data: (d) {
             final cols = (d['columns'] as List?) ?? const [];
             final dist = (d['districts'] as List?) ?? const [];
