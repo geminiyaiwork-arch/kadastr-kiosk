@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/i18n/strings.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/models.dart';
 import '../../core/network/repository.dart';
+import '../../core/services/avatar_player.dart';
+import '../../core/services/docs_video_cache.dart';
 import '../../core/theme/text_styles.dart';
 import '../../core/util/fmt.dart';
 import '../../core/theme/tokens.dart';
@@ -12,7 +16,8 @@ import '../../shell/kiosk_shell.dart';
 import '../common/kfield.dart';
 import '../common/widgets.dart';
 
-/// Documents — name / fee / term list.
+/// Documents — video qo'llanma ("Kadastr pasportini shakllantirish") + 15 toifa
+/// bo'yicha kerakli hujjatlar akkordeoni + admin narx/muddat jadvali.
 class DocsScreen extends ConsumerWidget {
   const DocsScreen({super.key});
   @override
@@ -24,37 +29,389 @@ class DocsScreen extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           PageHead(t['pDocs'], sub: t['docSub']),
-          AsyncView(async, data: (list) => KCard(
-            padding: EdgeInsets.zero,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(T.rCard),
-              child: Column(children: [
-                Container(
-                  color: T.sky,
-                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-                  child: Row(children: [
-                    Expanded(flex: 2, child: Text(t['pDocs'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: T.navy))),
-                    Expanded(child: Text(t['docFee'], textAlign: TextAlign.right, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: T.navy))),
-                    Expanded(child: Text(t['docTerm'], textAlign: TextAlign.right, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: T.navy))),
+
+          // 1) Video qo'llanma — "Kadastr pasportini shakllantirish"
+          const _DocVideoCard(),
+          const SizedBox(height: 10),
+
+          // 2) Qaysi holatda qanday hujjatlar kerak? — 15 toifa (akkordeon)
+          _DocSectionHead(Icons.folder_copy_rounded, t['docCatsTitle'], t['docCatsSub']),
+          const SizedBox(height: 12),
+          _DocCatList(reqLabel: t['docReqTitle']),
+
+          // 3) Narxlar va muddatlar (admin jadvali) — bo'sh bo'lsa ko'rsatilmaydi
+          AsyncView(async, data: (list) {
+            if (list.isEmpty) return const SizedBox.shrink();
+            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const SizedBox(height: 6),
+              _DocSectionHead(Icons.payments_rounded, t['docPriceTitle'], null),
+              const SizedBox(height: 12),
+              KCard(
+                padding: EdgeInsets.zero,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(T.rCard),
+                  child: Column(children: [
+                    Container(
+                      color: T.sky,
+                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+                      child: Row(children: [
+                        Expanded(flex: 2, child: Text(t['pDocs'], style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: T.navy))),
+                        Expanded(child: Text(t['docFee'], textAlign: TextAlign.right, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: T.navy))),
+                        Expanded(child: Text(t['docTerm'], textAlign: TextAlign.right, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: T.navy))),
+                      ]),
+                    ),
+                    for (final d in list)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+                        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: T.line))),
+                        child: Row(children: [
+                          Expanded(flex: 2, child: Text(d.name, style: const TextStyle(fontSize: 20, color: T.ink))),
+                          Expanded(child: Text(d.fee, textAlign: TextAlign.right, style: const TextStyle(fontSize: 20, color: T.ink))),
+                          Expanded(child: Text(d.term, textAlign: TextAlign.right, style: const TextStyle(fontSize: 20, color: T.ink))),
+                        ]),
+                      ),
                   ]),
                 ),
-                for (final d in list)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-                    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: T.line))),
-                    child: Row(children: [
-                      Expanded(flex: 2, child: Text(d.name, style: const TextStyle(fontSize: 22, color: T.ink))),
-                      Expanded(child: Text(d.fee, textAlign: TextAlign.right, style: const TextStyle(fontSize: 22, color: T.ink))),
-                      Expanded(child: Text(d.term, textAlign: TextAlign.right, style: const TextStyle(fontSize: 22, color: T.ink))),
-                    ]),
-                  ),
-              ]),
-            ),
-          )),
+              ),
+            ]);
+          }),
         ],
       ),
     );
   }
+}
+
+/// Bo'lim sarlavhasi — tinted ikon + sarlavha + (ixtiyoriy) tavsif.
+class _DocSectionHead extends StatelessWidget {
+  const _DocSectionHead(this.icon, this.title, this.sub);
+  final IconData icon;
+  final String title;
+  final String? sub;
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
+        child: Row(children: [
+          Container(
+            width: 48, height: 48, alignment: Alignment.center,
+            decoration: BoxDecoration(color: T.greenTint, borderRadius: BorderRadius.circular(14)),
+            child: Icon(icon, color: T.green, size: 27),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: const TextStyle(color: T.navy, fontSize: 24, fontWeight: FontWeight.w800, height: 1.15)),
+              if (sub != null && sub!.isNotEmpty) Text(sub!, style: K.pgSub),
+            ]),
+          ),
+        ]),
+      );
+}
+
+/// "Kadastr pasportini shakllantirish" video kartasi — bosilsa lokal keshdan o'ynaydi.
+/// Video Windows kiosk rejimida o'ynaydi (media_kit D3D barqaror); Linux dev'da gated.
+class _DocVideoCard extends ConsumerStatefulWidget {
+  const _DocVideoCard();
+  @override
+  ConsumerState<_DocVideoCard> createState() => _DocVideoCardState();
+}
+
+class _DocVideoCardState extends ConsumerState<_DocVideoCard> {
+  Player? _player;
+  VideoController? _controller;
+  bool _started = false;
+
+  @override
+  void dispose() {
+    try { _player?.dispose(); } catch (_) {}
+    super.dispose();
+  }
+
+  Future<void> _play(String path) async {
+    if (_started) return;
+    if (!AvatarPlayer.supported) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ref.read(trProvider)['docWinOnly'])),
+      );
+      return;
+    }
+    final p = Player();
+    final c = VideoController(p);
+    setState(() { _player = p; _controller = c; _started = true; });
+    try {
+      await p.setVolume(100);
+      await p.open(Media(path), play: true);
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ref.watch(trProvider);
+    final path = ref.watch(docsVideoProvider).asData?.value;
+
+    // Ochilgan video pleer (media_kit controls bilan)
+    if (_started && _controller != null) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 2),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(T.rLg), boxShadow: T.shadow),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Video(controller: _controller!, controls: AdaptiveVideoControls),
+        ),
+      );
+    }
+
+    // Poster — chiroyli gradient karta, bosilsa o'ynaydi
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: path == null ? null : () => _play(path),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 2),
+        height: 224,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(gradient: T.gNavyH, borderRadius: BorderRadius.circular(T.rLg), boxShadow: T.shadow),
+        child: Stack(children: [
+          Positioned(right: -22, bottom: -26, child: Icon(Icons.description_rounded, size: 210, color: Colors.white.withOpacity(0.06))),
+          Padding(
+            padding: const EdgeInsets.all(26),
+            child: Row(children: [
+              Container(
+                width: 94, height: 94, alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                  color: Colors.white, shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 22, offset: Offset(0, 8))],
+                ),
+                child: Icon(path == null ? Icons.hourglass_bottom_rounded : Icons.play_arrow_rounded, color: T.navy, size: 58),
+              ),
+              const SizedBox(width: 24),
+              Expanded(
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Icon(Icons.play_circle_fill_rounded, color: Color(0xFF9DC1FF), size: 20),
+                    const SizedBox(width: 8),
+                    Text(t['docVideoSub'].toUpperCase(), style: const TextStyle(color: Color(0xFF9DC1FF), fontSize: 14, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+                  ]),
+                  const SizedBox(height: 8),
+                  Text(t['docVideoTitle'], style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w800, height: 1.15)),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.16), borderRadius: BorderRadius.circular(30)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 22),
+                      const SizedBox(width: 6),
+                      Text(path == null ? '…' : t['docPlay'], style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+                    ]),
+                  ),
+                ]),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Bitta hujjat toifasi — nomi + kerakli hujjatlar ro'yxati.
+class _DocCat {
+  final IconData icon;
+  final String title;
+  final List<String> items;
+  const _DocCat(this.icon, this.title, this.items);
+}
+
+const _docCats = <_DocCat>[
+  _DocCat(Icons.add_home_work_rounded, 'Yangi qurilgan uy-joyni kadastrdan o‘tkazish', [
+    'Ariza',
+    'Shaxsni tasdiqlovchi hujjat (ID karta yoki pasport)',
+    'Qurilish uchun ruxsatnoma (agar talab qilinsa)',
+    'Yer uchastkasiga bo‘lgan huquqni tasdiqlovchi hujjat',
+    'Qurilish tugallanganligi to‘g‘risidagi hujjat (agar talab qilinsa)',
+    'Texnik pasport tayyorlash uchun zarur ma’lumotlar',
+  ]),
+  _DocCat(Icons.terrain_rounded, 'Yer uchastkasini kadastrdan o‘tkazish', [
+    'Ariza',
+    'ID karta yoki pasport',
+    'Yer ajratish to‘g‘risidagi qaror',
+    'Yerga bo‘lgan huquqni tasdiqlovchi hujjat',
+    'Yer chizmasi (mavjud bo‘lsa)',
+  ]),
+  _DocCat(Icons.swap_horiz_rounded, 'Oldi-sotdi shartnomasi asosida', [
+    'Ariza',
+    'ID karta',
+    'Notarial tasdiqlangan oldi-sotdi shartnomasi',
+    'Avvalgi kadastr hujjati',
+    'Davlat boji to‘langanligi haqidagi ma’lumot (zarur hollarda)',
+  ]),
+  _DocCat(Icons.card_giftcard_rounded, 'Hadya qilish (Sovg‘a)', [
+    'Ariza',
+    'ID karta',
+    'Hadya shartnomasi',
+    'Mulk hujjatlari',
+  ]),
+  _DocCat(Icons.diversity_1_rounded, 'Meros asosida', [
+    'Ariza',
+    'ID karta',
+    'Meros huquqi guvohnomasi',
+    'Mulk hujjatlari',
+  ]),
+  _DocCat(Icons.gavel_rounded, 'Sud qarori asosida', [
+    'Ariza',
+    'ID karta',
+    'Sudning qonuniy kuchga kirgan qarori',
+  ]),
+  _DocCat(Icons.engineering_rounded, 'Qurilishi tugallanmagan obyekt', [
+    'Ariza',
+    'ID karta',
+    'Yer hujjati',
+    'Qurilish hujjatlari',
+    'Obyekt joylashuvi',
+  ]),
+  _DocCat(Icons.store_rounded, 'Noturar bino', [
+    'Ariza',
+    'ID karta',
+    'Mulk hujjatlari',
+    'Qurilish hujjatlari (zarur hollarda)',
+  ]),
+  _DocCat(Icons.apartment_rounded, 'Ko‘p qavatli uydagi xonadon', [
+    'Ariza',
+    'ID karta',
+    'Oldi-sotdi yoki boshqa asos hujjati',
+    'Quruvchi tomonidan berilgan hujjatlar (yangi uy bo‘lsa)',
+  ]),
+  _DocCat(Icons.autorenew_rounded, 'Kadastr hujjatini qayta rasmiylashtirish', [
+    'Ariza',
+    'ID karta',
+    'Eski kadastr hujjati',
+    'O‘zgartirishni tasdiqlovchi hujjatlar',
+  ]),
+  _DocCat(Icons.assignment_rounded, 'Texnik pasport olish', [
+    'Ariza',
+    'ID karta',
+    'Mulk hujjati',
+  ]),
+  _DocCat(Icons.restore_page_rounded, 'Yo‘qolgan kadastr hujjatini tiklash', [
+    'Ariza',
+    'ID karta',
+    'Yo‘qolganligi haqida ma’lumot (zarur hollarda)',
+  ]),
+  _DocCat(Icons.call_split_rounded, 'Mulkni bo‘lish (ulush ajratish)', [
+    'Ariza',
+    'ID karta',
+    'Kelishuv yoki sud qarori',
+    'Mulk hujjati',
+  ]),
+  _DocCat(Icons.call_merge_rounded, 'Mulklarni birlashtirish', [
+    'Ariza',
+    'ID karta',
+    'Har ikkala obyekt hujjatlari',
+  ]),
+  _DocCat(Icons.architecture_rounded, 'Rekonstruksiya yoki qayta qurish', [
+    'Ariza',
+    'ID karta',
+    'Rekonstruksiya loyihasi',
+    'Ruxsatnoma (zarur hollarda)',
+    'Avvalgi texnik pasport',
+  ]),
+];
+
+/// 15 toifa akkordeon — bir vaqtda bittasi ochiladi.
+class _DocCatList extends StatefulWidget {
+  const _DocCatList({required this.reqLabel});
+  final String reqLabel;
+  @override
+  State<_DocCatList> createState() => _DocCatListState();
+}
+
+class _DocCatListState extends State<_DocCatList> {
+  int _open = -1;
+  @override
+  Widget build(BuildContext context) => Column(children: [
+        for (var i = 0; i < _docCats.length; i++)
+          _DocCatCard(
+            index: i,
+            cat: _docCats[i],
+            reqLabel: widget.reqLabel,
+            open: _open == i,
+            onTap: () => setState(() => _open = _open == i ? -1 : i),
+          ),
+      ]);
+}
+
+class _DocCatCard extends StatelessWidget {
+  const _DocCatCard({required this.index, required this.cat, required this.reqLabel, required this.open, required this.onTap});
+  final int index;
+  final _DocCat cat;
+  final String reqLabel;
+  final bool open;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: open ? T.green : T.line, width: open ? 2 : 1),
+          boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 16, offset: Offset(0, 5))],
+        ),
+        child: Column(children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(children: [
+                Container(
+                  width: 46, height: 46, alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [T.green, Color(0xFF15855A)]),
+                    borderRadius: BorderRadius.circular(13),
+                    boxShadow: const [BoxShadow(color: Color(0x331FA463), blurRadius: 10, offset: Offset(0, 4))],
+                  ),
+                  child: Text('${index + 1}', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+                ),
+                const SizedBox(width: 14),
+                Icon(cat.icon, color: T.green, size: 26),
+                const SizedBox(width: 12),
+                Expanded(child: Text(cat.title, style: const TextStyle(color: T.navy, fontSize: 20, fontWeight: FontWeight.w700, height: 1.2))),
+                const SizedBox(width: 8),
+                AnimatedRotation(
+                  turns: open ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(Icons.expand_more_rounded, size: 34, color: open ? T.green : T.muted),
+                ),
+              ]),
+            ),
+          ),
+          AnimatedCrossFade(
+            firstChild: const SizedBox(width: double.infinity),
+            secondChild: Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+              decoration: BoxDecoration(color: T.greenTint, borderRadius: BorderRadius.circular(14)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(reqLabel.toUpperCase(), style: const TextStyle(color: T.green, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 1)),
+                const SizedBox(height: 10),
+                for (final it in cat.items)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 9),
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Padding(padding: EdgeInsets.only(top: 1), child: Icon(Icons.check_circle_rounded, color: T.green, size: 22)),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(it, style: const TextStyle(color: T.ink, fontSize: 19, height: 1.3, fontWeight: FontWeight.w500))),
+                    ]),
+                  ),
+              ]),
+            ),
+            crossFadeState: open ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 220),
+          ),
+        ]),
+      );
 }
 
 /// Reception schedule + booking form (uses the virtual keyboard).
