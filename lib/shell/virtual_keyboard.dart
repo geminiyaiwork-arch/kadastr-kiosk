@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../core/env.dart';
+import '../core/network/api_client.dart';
 import '../core/theme/tokens.dart';
 import 'vk_controller.dart';
 import 'vk_settings.dart';
@@ -19,10 +23,69 @@ class VkOverlay extends ConsumerStatefulWidget {
 class _VkOverlayState extends ConsumerState<VkOverlay> {
   Offset? _drag; // sudrash paytidagi lokal joy (tugagach settings'ga saqlanadi)
   bool _settings = false;
+  // QR telefon-pult
+  String? _kbToken;
+  bool _kbOn = false;
+  bool _kbShowQr = false;
+  bool _kbConnected = false;
 
   double _canvasScale() {
     final mq = MediaQuery.of(context).size;
     return math.min(mq.width / Env.canvasW, mq.height / Env.canvasH);
+  }
+
+  String _genToken() {
+    final r = math.Random.secure();
+    return List.generate(20, (_) => r.nextInt(16).toRadixString(16)).join();
+  }
+
+  String get _phoneUrl => '${Env.portalOrigin}/kb.html?s=${_kbToken ?? ''}';
+
+  void _toggleKb() {
+    if (_kbOn) {
+      setState(() {
+        _kbOn = false;
+        _kbToken = null;
+        _kbShowQr = false;
+        _kbConnected = false;
+      });
+    } else {
+      final tok = _genToken();
+      setState(() {
+        _kbToken = tok;
+        _kbOn = true;
+        _kbShowQr = true;
+        _kbConnected = false;
+      });
+      _kbLoop(tok);
+    }
+  }
+
+  // Telefon matnini long-poll bilan olib, kiosk katagiga yozadi (faqat 1 telefon — server qulflaydi).
+  Future<void> _kbLoop(String token) async {
+    final dio = ref.read(dioProvider);
+    while (mounted && _kbOn && _kbToken == token) {
+      try {
+        final r = await dio.get('/kb/poll',
+            queryParameters: {'s': token}, options: Options(receiveTimeout: const Duration(seconds: 30)));
+        if (!mounted || _kbToken != token) break;
+        final m = Map<String, dynamic>.from(r.data as Map);
+        if (m['hello'] == true) {
+          if (!_kbConnected) setState(() => _kbConnected = true);
+        } else if (m['text'] != null) {
+          if (!_kbConnected) setState(() => _kbConnected = true);
+          ref.read(vkProvider.notifier).setRemoteText('${m['text']}');
+        }
+      } catch (_) {
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _kbOn = false;
+    super.dispose();
   }
 
   @override
@@ -72,6 +135,9 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
                       _Fn(label: vk.lang.toUpperCase(), onTap: c.cycleLang),
                       const SizedBox(width: 8),
                       _Fn(label: '⚙️', onTap: () => setState(() => _settings = !_settings)),
+                      const SizedBox(width: 8),
+                      _Fn(label: _kbOn ? (_kbConnected ? '📱 Ulandi' : '📱 QR') : '📱 Ulanish',
+                          color: _kbOn ? (_kbConnected ? T.green : T.blue) : T.vkWide, onTap: _toggleKb),
                       Expanded(
                         child: Center(
                           child: Icon(Icons.drag_handle_rounded, color: s.text.withOpacity(0.55), size: 34),
@@ -86,6 +152,42 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
               ),
               // === Sozlamalar paneli (ochilsa) ===
               if (_settings) _SettingsPanel(s: s),
+              // === QR telefon-pult paneli (ochilsa) ===
+              if (_kbShowQr && _kbToken != null)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(14)),
+                  child: Row(children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
+                      child: QrImageView(data: _phoneUrl, size: 150, backgroundColor: Colors.white),
+                    ),
+                    const SizedBox(width: 18),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                        const Text('Telefonдан yozish', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 6),
+                        Text(
+                          _kbConnected
+                              ? '✓ Telefon ulandi — yozganingiz shu yerда chiqadi'
+                              : 'Telefon kamerasi bilan QR-kodни skanerlang. Faqat 1 telefon ulanadi.',
+                          style: TextStyle(color: _kbConnected ? T.green : Colors.white70, fontSize: 16, height: 1.3),
+                        ),
+                        const SizedBox(height: 10),
+                        GestureDetector(
+                          onTap: () => setState(() => _kbShowQr = false),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            decoration: BoxDecoration(color: T.vkWide, borderRadius: BorderRadius.circular(10)),
+                            child: const Text('QRни yashirish', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ]),
+                ),
               // === Tugmalar (panelga sig'ish uchun FittedBox) ===
               SizedBox(
                 width: panelW - 32,

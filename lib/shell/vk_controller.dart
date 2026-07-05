@@ -100,6 +100,13 @@ class VkController extends StateNotifier<VkState> {
     }
   }
 
+  /// Telefon-pultдан kelgan TO'LIQ matn — katakни shu matnга tenglashtiradi (almashtiradi).
+  void setRemoteText(String s) {
+    final c = state.target;
+    if (c == null) return;
+    c.value = TextEditingValue(text: s, selection: TextSelection.collapsed(offset: s.length));
+  }
+
   void _insert(String s) {
     final c = state.target;
     if (c == null) return;
