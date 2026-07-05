@@ -386,6 +386,7 @@ class ReceptionScreen extends ConsumerStatefulWidget {
 class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   final _name = TextEditingController();
   final _phone = TextEditingController();
+  final _subject = TextEditingController();
   int? _managerId;
   String? _bookedId;
   bool _loading = false;
@@ -395,11 +396,12 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   void dispose() {
     _name.dispose();
     _phone.dispose();
+    _subject.dispose();
     super.dispose();
   }
 
   Future<void> _book(List<ReceptionManager> mgrs) async {
-    if (_name.text.trim().isEmpty || _phone.text.trim().isEmpty) return;
+    if (_name.text.trim().isEmpty || _phone.text.trim().isEmpty || _subject.text.trim().isEmpty) return;
     setState(() {
       _loading = true;
       _bookFail = false;
@@ -407,8 +409,12 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     final mid = _managerId ?? (mgrs.isNotEmpty ? mgrs.first.id : null);
     String? id;
     try {
-      final r = await ref.read(dioProvider).post('/reception/book',
-          data: {'name': _name.text.trim(), 'phone': _phone.text.trim(), 'managerId': mid});
+      final r = await ref.read(dioProvider).post('/reception/book', data: {
+        'name': _name.text.trim(),
+        'phone': _phone.text.trim(),
+        'subject': _subject.text.trim(),
+        'managerId': mid,
+      });
       final m = Map<String, dynamic>.from(r.data as Map);
       if (m['id'] != null) id = '${m['id']}';
     } catch (_) {}
@@ -418,6 +424,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       // MUVAFFAQIYAT FAQAT server haqiqiy id qaytarganda — soxta lokal Q-raqam YO'Q.
       if (id != null && id.isNotEmpty) {
         _bookedId = id;
+        ref.invalidate(receptionStatsProvider); // "qabulga keldi" soni darhol oshadi
       } else {
         _bookFail = true;
       }
@@ -465,6 +472,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                   KField(controller: _name, label: t['recName']),
                   const SizedBox(height: 14),
                   KField(controller: _phone, label: t['recPhone'], hint: '+998'),
+                  const SizedBox(height: 14),
+                  KField(controller: _subject, label: t['recSubject'], hint: t['recSubjectHint'], lines: 3),
                   if (list.isNotEmpty) ...[
                     const SizedBox(height: 14),
                     Text(t['recPickMgr'], style: K.fLabel),
@@ -495,10 +504,62 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
               ),
             ]);
           }),
+          const SizedBox(height: 12),
+          _statsSection(t),
         ],
       ),
     );
   }
+
+  /// Qabul statistikasi — keldi / hal bo'ldi / hal bo'lmadi (server /reception/stats).
+  Widget _statsSection(Map<String, dynamic> t) {
+    final async = ref.watch(receptionStatsProvider);
+    return async.maybeWhen(
+      orElse: () => const SizedBox.shrink(),
+      data: (s) {
+        int v(String k) => (s[k] as num?)?.toInt() ?? 0;
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 6, 4, 12),
+            child: Row(children: [
+              Container(
+                width: 48, height: 48, alignment: Alignment.center,
+                decoration: BoxDecoration(color: T.greenTint, borderRadius: BorderRadius.circular(14)),
+                child: const Icon(Icons.insights_rounded, color: T.green, size: 26),
+              ),
+              const SizedBox(width: 14),
+              Text(t['recStatsTitle'] ?? 'Qabul statistikasi',
+                  style: const TextStyle(color: T.navy, fontSize: 24, fontWeight: FontWeight.w800)),
+            ]),
+          ),
+          Row(children: [
+            _statCard(Icons.groups_rounded, t['recCame'] ?? 'Qabulga keldi', v('total'), T.blue),
+            _statCard(Icons.task_alt_rounded, t['recResolved'] ?? 'Hal bo‘ldi', v('resolved'), T.green),
+            _statCard(Icons.cancel_rounded, t['recUnresolved'] ?? 'Hal bo‘lmadi', v('unresolved'), T.recRed),
+          ]),
+        ]);
+      },
+    );
+  }
+
+  Widget _statCard(IconData ic, String label, int value, Color color) => Expanded(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 5),
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: T.line),
+            boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 16, offset: Offset(0, 5))],
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(ic, color: color, size: 30),
+            const SizedBox(height: 10),
+            Text('$value', style: TextStyle(color: color, fontSize: 40, fontWeight: FontWeight.w800)),
+            Text(label, style: K.pgSub),
+          ]),
+        ),
+      );
 }
 
 /// Xatlov (937) — Andijon: tumanlar kesimi → tuman ustiga bosilsa PADROBNI (barcha ustunlar).

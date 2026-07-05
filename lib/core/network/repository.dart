@@ -89,6 +89,12 @@ final phonesProvider = FutureProvider<List<PhoneEntry>>((ref) async =>
 final receptionProvider = FutureProvider<List<ReceptionManager>>((ref) async =>
     _list((await ref.read(dioProvider).get('/reception')).data, ReceptionManager.fromJson));
 
+/// Rahbar qabuli statistikasi (keldi / hal bo'ldi / hal bo'lmadi) — kiosk pastida.
+final receptionStatsProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  final r = await ref.read(dioProvider).get('/reception/stats');
+  return Map<String, dynamic>.from(r.data as Map);
+});
+
 final documentsProvider = FutureProvider<List<DocItem>>((ref) async =>
     _list((await ref.read(dioProvider).get('/documents')).data, DocItem.fromJson));
 
