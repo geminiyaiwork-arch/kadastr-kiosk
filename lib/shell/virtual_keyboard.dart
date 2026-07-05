@@ -10,6 +10,7 @@ import '../core/env.dart';
 import '../core/i18n/strings.dart';
 import '../core/network/api_client.dart';
 import '../core/theme/tokens.dart';
+import '../router.dart';
 import 'vk_controller.dart';
 import 'vk_fields.dart';
 import 'vk_settings.dart';
@@ -133,6 +134,13 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
     });
     ref.listen<VkSettings>(vkSettingsProvider, (prev, next) {
       if (next.pos == null && _drag != null && mounted) setState(() => _drag = null);
+    });
+    // BOSHQA sahifага o'tса — klaviatura darhol yo'qolsin (yangi sahifада input bo'lsa qayta ochiladi)
+    ref.listen<String>(currentRouteProvider, (prev, next) {
+      if (prev != next) {
+        _userDismissed = false;
+        if (ref.read(vkProvider).visible) ref.read(vkProvider.notifier).hide();
+      }
     });
     // AUTO ochilish/yopilish: sahifада input bor bo'lsa klaviatura o'zi ochiladi;
     // input yo'q (bosh sahifа/orqа) bo'lsa o'zi yopiladi.
