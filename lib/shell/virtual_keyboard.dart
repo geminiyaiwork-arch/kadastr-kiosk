@@ -43,12 +43,8 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
 
   void _toggleKb() {
     if (_kbOn) {
-      setState(() {
-        _kbOn = false;
-        _kbToken = null;
-        _kbShowQr = false;
-        _kbConnected = false;
-      });
+      // allaqachon yoqilgan — QR modalni qayta ko'rsatamiz (ulanishni to'xtatmaymiz)
+      setState(() => _kbShowQr = true);
     } else {
       final tok = _genToken();
       setState(() {
@@ -71,15 +67,28 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
         if (!mounted || _kbToken != token) break;
         final m = Map<String, dynamic>.from(r.data as Map);
         if (m['hello'] == true) {
-          if (!_kbConnected) setState(() => _kbConnected = true);
+          _onKbConnect();
         } else if (m['text'] != null) {
-          if (!_kbConnected) setState(() => _kbConnected = true);
+          _onKbConnect();
           ref.read(vkProvider.notifier).setRemoteText('${m['text']}');
         }
       } catch (_) {
         await Future.delayed(const Duration(milliseconds: 500));
       }
     }
+  }
+
+  // Telefon ulanди — ✓ ko'rsatamiz va QR modalни o'zi yopamiz.
+  void _onKbConnect() {
+    if (!mounted) return;
+    if (!_kbConnected || _kbShowQr) setState(() { _kbConnected = true; _kbShowQr = false; });
+  }
+
+  // Kiosk boshqa katakка o'tса — telefonдаги matnни tozalash buyrug'i.
+  void _sendKbClear() {
+    final tok = _kbToken;
+    if (tok == null) return;
+    ref.read(dioProvider).post('/kb/cmd', data: {'s': tok, 'cmd': 'clear'}).then((_) {}, onError: (_) {});
   }
 
   @override
@@ -93,20 +102,25 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
     final vk = ref.watch(vkProvider);
     final c = ref.read(vkProvider.notifier);
     final s = ref.watch(vkSettingsProvider);
+    // Boshqa katakка o'tса → telefon-pult matnini tozalash; "standart"да drag'ni tiklash (pastga)
+    ref.listen<VkState>(vkProvider, (prev, next) {
+      if (prev?.target != next.target && _kbOn && _kbToken != null && next.target != null) _sendKbClear();
+    });
+    ref.listen<VkSettings>(vkSettingsProvider, (prev, next) {
+      if (next.pos == null && _drag != null && mounted) setState(() => _drag = null);
+    });
+
     if (!vk.visible) return const SizedBox.shrink();
 
     final panelW = (972.0 * s.scale).clamp(600.0, 1060.0);
     final defLeft = (Env.canvasW - panelW) / 2;
-    final left = _drag?.dx ?? s.pos?.dx ?? defLeft;
-    final top = _drag?.dy ?? s.pos?.dy ?? 1180.0;
+    final estH = 90 + 460 * ((panelW - 32) / 1034) + 40; // taxminiy balandlik (default/drag)
+    final custom = _drag ?? s.pos;
+    final left = (custom?.dx ?? defLeft).clamp(0.0, Env.canvasW - panelW);
 
-    return Positioned(
-      left: left.clamp(0.0, Env.canvasW - panelW),
-      top: top.clamp(0.0, Env.canvasH - 120),
-      width: panelW,
-      child: Material(
-        type: MaterialType.transparency,
-        child: Container(
+    final kbCard = Material(
+      type: MaterialType.transparency,
+      child: Container(
           decoration: BoxDecoration(
             color: s.panel,
             borderRadius: BorderRadius.circular(22),
@@ -122,7 +136,7 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
                 onPanUpdate: (d) {
                   final cs = _canvasScale();
                   final dd = cs > 0 ? d.delta / cs : d.delta;
-                  final cur = _drag ?? s.pos ?? Offset(defLeft, 1180.0);
+                  final cur = _drag ?? s.pos ?? Offset(defLeft, Env.canvasH - 24 - estH);
                   setState(() => _drag = Offset(cur.dx + dd.dx, cur.dy + dd.dy));
                 },
                 onPanEnd: (_) {
@@ -136,8 +150,8 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
                       const SizedBox(width: 8),
                       _Fn(label: '⚙️', onTap: () => setState(() => _settings = !_settings)),
                       const SizedBox(width: 8),
-                      _Fn(label: _kbOn ? (_kbConnected ? '📱 Ulandi' : '📱 QR') : '📱 Ulanish',
-                          color: _kbOn ? (_kbConnected ? T.green : T.blue) : T.vkWide, onTap: _toggleKb),
+                      _Fn(label: !_kbOn ? '📱 Ulanish' : (_kbConnected ? '📱 ✓' : '📱 QR'),
+                          color: !_kbOn ? T.vkWide : (_kbConnected ? T.green : T.blue), onTap: _toggleKb),
                       Expanded(
                         child: Center(
                           child: Icon(Icons.drag_handle_rounded, color: s.text.withOpacity(0.55), size: 34),
@@ -152,42 +166,6 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
               ),
               // === Sozlamalar paneli (ochilsa) ===
               if (_settings) _SettingsPanel(s: s),
-              // === QR telefon-pult paneli (ochilsa) ===
-              if (_kbShowQr && _kbToken != null)
-                Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(14)),
-                  child: Row(children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
-                      child: QrImageView(data: _phoneUrl, size: 150, backgroundColor: Colors.white),
-                    ),
-                    const SizedBox(width: 18),
-                    Expanded(
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                        const Text('Telefonдан yozish', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 6),
-                        Text(
-                          _kbConnected
-                              ? '✓ Telefon ulandi — yozganingiz shu yerда chiqadi'
-                              : 'Telefon kamerasi bilan QR-kodни skanerlang. Faqat 1 telefon ulanadi.',
-                          style: TextStyle(color: _kbConnected ? T.green : Colors.white70, fontSize: 16, height: 1.3),
-                        ),
-                        const SizedBox(height: 10),
-                        GestureDetector(
-                          onTap: () => setState(() => _kbShowQr = false),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            decoration: BoxDecoration(color: T.vkWide, borderRadius: BorderRadius.circular(10)),
-                            child: const Text('QRни yashirish', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
-                          ),
-                        ),
-                      ]),
-                    ),
-                  ]),
-                ),
               // === Tugmalar (panelga sig'ish uchun FittedBox) ===
               SizedBox(
                 width: panelW - 32,
@@ -222,6 +200,56 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
                 ),
               ),
             ],
+          ),
+        ),
+      );
+
+    final kb = (custom == null)
+        ? Positioned(left: left, bottom: 24, width: panelW, child: kbCard) // default: pastda
+        : Positioned(left: left, top: custom.dy.clamp(0.0, Env.canvasH - 120), width: panelW, child: kbCard);
+    return Positioned.fill(
+      child: Stack(children: [
+        kb,
+        if (_kbShowQr && _kbToken != null) Positioned.fill(child: _qrModal(s)),
+      ]),
+    );
+  }
+
+  // QR MODAL — qorong'i fon + markazда QR karta (ulanганда o'zi yopiladi).
+  Widget _qrModal(VkSettings s) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => setState(() => _kbShowQr = false),
+      child: Container(
+        color: const Color(0xCC000000),
+        alignment: Alignment.center,
+        child: GestureDetector(
+          onTap: () {}, // karta ustiga bosса yopilmasin
+          child: Container(
+            width: 560,
+            padding: const EdgeInsets.all(30),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text('Telefondan yozish', style: TextStyle(color: T.navy, fontSize: 30, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              const Text('Telefon kamerangiz bilan QR-kodni skanerlang.\nFaqat 1 telefon ulanadi.',
+                  textAlign: TextAlign.center, style: TextStyle(color: T.muted, fontSize: 18, height: 1.35)),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(border: Border.all(color: T.line, width: 2), borderRadius: BorderRadius.circular(16)),
+                child: QrImageView(data: _phoneUrl, size: 300, backgroundColor: Colors.white),
+              ),
+              const SizedBox(height: 18),
+              GestureDetector(
+                onTap: () => setState(() => _kbShowQr = false),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 14),
+                  decoration: BoxDecoration(color: T.vkPanel, borderRadius: BorderRadius.circular(14)),
+                  child: const Text('Yopish', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
           ),
         ),
       ),
