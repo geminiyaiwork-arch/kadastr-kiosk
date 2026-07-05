@@ -101,7 +101,19 @@ class _PropertyScreenState extends ConsumerState<PropertyScreen> {
     }
   }
 
+  IconData _fieldIcon(String label) {
+    final l = label.toLowerCase();
+    if (l.contains('turi') || l.contains("ob'ekt") || l.contains('obekt')) return Icons.apartment_rounded;
+    if (l.contains('maydon')) return Icons.crop_free_rounded;
+    if (l.contains('mulkdor')) return Icons.groups_rounded;
+    if (l.contains('qiymat') || l.contains('narx')) return Icons.savings_outlined;
+    if (l.contains('sana') || l.contains('kun')) return Icons.calendar_month_rounded;
+    if (l.contains('chirma') || l.contains('raqam') || l.contains('nomer')) return Icons.qr_code_2_rounded;
+    return Icons.info_outline_rounded;
+  }
+
   /// davreestr natijasi: {title (kadastr raqami), location (manzil), fields:[{label,value}]}.
+  /// Dizayn: yashil chap-chegara, NATIJA sarlavha, ikonkali qatorlar, qiymatlar O'NGGA tekislangan.
   Widget _buildResult(Map<String, dynamic> t, dynamic data) {
     final m = (data is Map) ? Map<String, dynamic>.from(data) : <String, dynamic>{};
     final title = '${m['title'] ?? ''}'.trim();
@@ -117,24 +129,101 @@ class _PropertyScreenState extends ConsumerState<PropertyScreen> {
     if (title.isEmpty && rows.isEmpty) {
       return KCard(accent: const Color(0xFFE8A317), child: Text(t['propNotFound'], style: K.cardP));
     }
-    return KCard(
-      accent: T.green,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(t['propResT'], style: K.pgSub),
-        if (title.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(title, style: K.cardH),
-        ],
-        if (location.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(location, style: K.pgSub.copyWith(color: T.blue, fontWeight: FontWeight.w600)),
-        ],
-        const SizedBox(height: 14),
-        KvRows(rows),
-        const SizedBox(height: 10),
-        Text(t['propReestr'], style: K.pgSub),
-      ]),
+    Widget fieldRow(String label, String value) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+            Icon(_fieldIcon(label), color: T.green, size: 28),
+            const SizedBox(width: 18),
+            Expanded(
+              flex: 5,
+              child: Text(label, style: const TextStyle(color: T.navy, fontSize: 19, fontWeight: FontWeight.w500)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              flex: 5,
+              child: Text(value,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(color: T.navy, fontSize: 22, fontWeight: FontWeight.w800)),
+            ),
+          ]),
+        );
+
+    return Container(
+      margin: const EdgeInsets.only(top: 4),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: T.line, width: 1),
+        boxShadow: const [BoxShadow(color: Color(0x14000000), blurRadius: 26, offset: Offset(0, 10))],
+      ),
+      child: IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Container(width: 8, color: T.green), // yashil chap chegara
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(26, 24, 26, 20),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                // Sarlavha: NATIJA + kadastr raqami
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Icon(Icons.fact_check_rounded, color: T.green, size: 42),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(t['propResT'].toString().toUpperCase(),
+                          style: const TextStyle(color: T.green, fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: 1)),
+                      if (title.isNotEmpty)
+                        Text(title,
+                            style: const TextStyle(color: T.blue, fontSize: 36, fontWeight: FontWeight.w800, height: 1.05)),
+                    ]),
+                  ),
+                ]),
+                if (location.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Icon(Icons.location_on_rounded, color: T.blue, size: 24),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(location, style: const TextStyle(color: T.blue, fontSize: 19, fontWeight: FontWeight.w600)),
+                    ),
+                  ]),
+                ],
+                const SizedBox(height: 14),
+                for (var i = 0; i < rows.length; i++) ...[
+                  if (i > 0) Container(height: 1, color: T.line),
+                  fieldRow(rows[i].$1, rows[i].$2),
+                ],
+                const SizedBox(height: 14),
+                // Pastki banner: manba
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                  decoration: BoxDecoration(color: T.greenTint, borderRadius: BorderRadius.circular(14)),
+                  child: Row(children: [
+                    const Icon(Icons.verified_user_rounded, color: T.green, size: 24),
+                    const SizedBox(width: 12),
+                    Expanded(child: _reestrNote(t)),
+                  ]),
+                ),
+              ]),
+            ),
+          ),
+        ]),
+      ),
     );
+  }
+
+  // "Ma'lumot davreestr.uz Davlat reestridan olinadi" — davreestr.uz ko'k rangда
+  Widget _reestrNote(Map<String, dynamic> t) {
+    final full = '${t['propReestr']}';
+    const link = 'davreestr.uz';
+    final i = full.indexOf(link);
+    const base = TextStyle(color: T.navy, fontSize: 16, fontWeight: FontWeight.w500);
+    if (i < 0) return Text(full, style: base);
+    return Text.rich(TextSpan(style: base, children: [
+      TextSpan(text: full.substring(0, i)),
+      const TextSpan(text: link, style: TextStyle(color: T.blue, fontWeight: FontWeight.w700)),
+      TextSpan(text: full.substring(i + link.length)),
+    ]));
   }
 
   @override
