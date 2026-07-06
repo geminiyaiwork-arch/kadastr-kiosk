@@ -10,10 +10,11 @@ import '../../core/theme/tokens.dart';
 /// Kiosk → xodim qo'ng'irog'i (WebRTC caller). Signaling: server rendezvous (long-poll).
 /// DIQQAT: flutter_webrtc `libwebrtc.dll` — Smart App Control uni bloklashi mumkin (test).
 class CallScreen extends ConsumerStatefulWidget {
-  const CallScreen({super.key, required this.employeeId, required this.name, required this.video});
+  const CallScreen({super.key, required this.employeeId, required this.name, required this.video, this.onClose});
   final int employeeId;
   final String name;
   final bool video;
+  final VoidCallback? onClose; // inline ishlatilганда (Navigator.pop o'rniga)
   @override
   ConsumerState<CallScreen> createState() => _CallScreenState();
 }
@@ -124,7 +125,8 @@ class _CallScreenState extends ConsumerState<CallScreen> {
     try { await _pc?.close(); } catch (_) {}
     try { await _local.dispose(); } catch (_) {}
     try { await _remote.dispose(); } catch (_) {}
-    if (mounted) Navigator.of(context).maybePop();
+    if (!mounted) return;
+    if (widget.onClose != null) { widget.onClose!(); } else { Navigator.of(context).maybePop(); }
   }
 
   @override
