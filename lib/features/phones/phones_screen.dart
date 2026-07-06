@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/env.dart';
 import '../../core/i18n/strings.dart';
+import '../../core/network/api_client.dart';
 import '../../core/network/models.dart';
 import '../../core/network/repository.dart';
 import '../../core/theme/tokens.dart';
 import '../../shell/kiosk_shell.dart';
 import '../call/call_screen.dart';
+import '../common/kfield.dart';
 import '../common/widgets.dart';
 
 String _photoUrl(String p) => p.isEmpty ? '' : '${Env.apiBase}$p'; // /api/v1/turniket/photo/...
@@ -23,15 +25,48 @@ class PhonesScreen extends ConsumerStatefulWidget {
 
 class _PhonesScreenState extends ConsumerState<PhonesScreen> {
   Employee? _sel;
-  bool _calling = false;
-  bool _callVideo = false;
+  bool _calling = false, _callVideo = false;
+  bool _messaging = false, _msgOffline = false, _sending = false, _sentMsg = false;
+  final _msgText = TextEditingController();
+  final _msgPhone = TextEditingController();
+
+  @override
+  void dispose() {
+    _msgText.dispose();
+    _msgPhone.dispose();
+    super.dispose();
+  }
 
   void _startCall(Employee e, bool video) {
     if (!(e.inside || e.online)) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${e.name} hozir joyida yo‘q'), backgroundColor: T.navy));
+      // Xodim oflayn — qo'ng'iroq o'rniga xabar qoldirishni taklif qilamiz (ilova/adminга tushadi).
+      setState(() { _sel = e; _messaging = true; _msgOffline = true; _sentMsg = false; });
       return;
     }
     setState(() { _sel = e; _callVideo = video; _calling = true; });
+  }
+
+  void _openMessage(Employee e) => setState(() { _sel = e; _messaging = true; _msgOffline = false; _sentMsg = false; });
+
+  void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m), backgroundColor: T.navy));
+
+  Future<void> _sendMessage() async {
+    if (_sending) return;
+    if (_msgPhone.text.replaceAll(RegExp(r'\D'), '').length < 7) { _toast('Telefon raqamingizni kiriting — xodim shu raqam orqali bog‘lanadi'); return; }
+    if (_msgText.text.trim().isEmpty) { _toast('Xabar matnini yozing'); return; }
+    setState(() => _sending = true);
+    String? id;
+    try {
+      final r = await ref.read(dioProvider).post('/appeal', data: {
+        'phone': _msgPhone.text.trim(), 'text': _msgText.text.trim(),
+        'employee_id': _sel!.id, 'department': _sel!.dept,
+        'mode': 'message', 'lang': ref.read(localeProvider),
+      });
+      id = (Map<String, dynamic>.from(r.data as Map)['id'] ?? '').toString();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() { _sending = false; if (id != null && id.isNotEmpty) { _sentMsg = true; _msgText.clear(); _msgPhone.clear(); } });
+    if (id == null || id.isEmpty) _toast('Yuborilmadi — internetni tekshirib qayta urining');
   }
 
   @override
@@ -45,6 +80,7 @@ class _PhonesScreenState extends ConsumerState<PhonesScreen> {
       );
     }
     final t = ref.watch(trProvider);
+    if (_messaging && _sel != null) return KioskScaffold(body: _composer());
     final employees = ref.watch(employeesProvider);
     return KioskScaffold(
       body: _sel == null
@@ -53,8 +89,70 @@ class _PhonesScreenState extends ConsumerState<PhonesScreen> {
               employee: _sel!,
               onBack: () => setState(() => _sel = null),
               onCall: (v) => _startCall(_sel!, v),
+              onMessage: () => _openMessage(_sel!),
             ),
     );
+  }
+
+  Widget _backRow(VoidCallback onTap, String label) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 52, height: 52, alignment: Alignment.center,
+              decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: T.line, width: 1.5), boxShadow: T.shadow),
+              child: const Icon(Icons.arrow_back_rounded, color: T.navy, size: 28),
+            ),
+            const SizedBox(width: 14),
+            Text(label, style: const TextStyle(color: T.navy, fontSize: 20, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      );
+
+  // Xodimга XABAR — oflayn/onlayn farqi yo'q (xodim ilovasi + admin murojaatlariga tushadi).
+  Widget _composer() {
+    final e = _sel!;
+    if (_sentMsg) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        PageHead('${e.name}', sub: 'Xabar yuborildi'),
+        KCard(accent: T.green, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: const [
+            Icon(Icons.mark_email_read_rounded, color: T.green, size: 36),
+            SizedBox(width: 12),
+            Text('Xabaringiz yuborildi', style: TextStyle(color: T.green, fontSize: 24, fontWeight: FontWeight.w800)),
+          ]),
+          const SizedBox(height: 12),
+          Text('${e.name} xabaringizni ko‘radi va ko‘rsatgan raqamingiz orqali siz bilan bog‘lanadi.',
+              style: const TextStyle(color: T.muted, fontSize: 18, height: 1.4)),
+          const SizedBox(height: 18),
+          KButton('Xodimlar ro‘yxatiga qaytish', onTap: () => setState(() { _messaging = false; _sel = null; })),
+        ])),
+      ]);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _backRow(() => setState(() => _messaging = false), _msgOffline ? 'Ortga' : e.name),
+      PageHead('${e.name}ga xabar', sub: e.position.isEmpty ? 'Xodimga murojaat' : e.position),
+      if (_msgOffline)
+        KCard(accent: const Color(0xFFF5A623), child: Row(children: [
+          const Icon(Icons.schedule_rounded, color: Color(0xFFF5A623), size: 30),
+          const SizedBox(width: 14),
+          Expanded(child: Text('${e.name} hozir oflayn. Qo‘ng‘iroq o‘rniga xabar qoldiring — xodim ko‘rgach siz bilan bog‘lanadi.',
+              style: const TextStyle(color: T.navy, fontSize: 17, height: 1.35))),
+        ])),
+      KCard(child: Column(children: [
+        KField(controller: _msgText, label: 'Xabar matni', hint: 'Xabaringizni yozing…', lines: 4),
+        const SizedBox(height: 14),
+        KField(controller: _msgPhone, label: 'Telefon raqamingiz *', hint: '+998 __ ___ __ __'),
+      ])),
+      const SizedBox(height: 16),
+      Row(children: [
+        Expanded(child: KButton('Bekor', variant: 'outline', onTap: () => setState(() => _messaging = false))),
+        const SizedBox(width: 12),
+        Expanded(flex: 2, child: KButton(_sending ? 'Yuborilmoqda…' : 'Xabarni yuborish', onTap: _sendMessage)),
+      ]),
+    ]);
   }
 
   Widget _grid(Map<String, dynamic> t, AsyncValue<List<Employee>> employees) {
@@ -179,10 +277,11 @@ Widget _statusPill(bool live) => Container(
 
 // ─────────────────────────── BATAFSIL (premium, INLINE) ───────────────────────────
 class _EmployeeDetail extends StatelessWidget {
-  const _EmployeeDetail({required this.employee, required this.onBack, required this.onCall});
+  const _EmployeeDetail({required this.employee, required this.onBack, required this.onCall, required this.onMessage});
   final Employee employee;
   final VoidCallback onBack;
   final ValueChanged<bool> onCall; // true = video
+  final VoidCallback onMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -259,8 +358,7 @@ class _EmployeeDetail extends StatelessWidget {
         if (e.canVoice && e.canVideo) const SizedBox(width: 14),
         if (e.canVideo) _actBtn(Icons.videocam_rounded, 'Video', const [T.blue, Color(0xFF1E5FD0)], () => onCall(true)),
         const SizedBox(width: 14),
-        _actBtn(Icons.chat_bubble_rounded, 'Xabar', const [Color(0xFF7A3FB0), Color(0xFF9B4FD0)], () =>
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Xabar yozish — tez kunda'), backgroundColor: T.navy))),
+        _actBtn(Icons.chat_bubble_rounded, 'Xabar', const [Color(0xFF7A3FB0), Color(0xFF9B4FD0)], onMessage),
       ]),
       const SizedBox(height: 18),
       // ALOQA MA'LUMOTLARI
