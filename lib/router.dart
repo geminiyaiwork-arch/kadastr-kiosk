@@ -26,6 +26,11 @@ final attractProvider = StateProvider<bool>((_) => false);
 /// buni ko'rib suhbat o'rtasida zastavka ochib yubormaydi.
 final voiceActivityProvider = StateProvider<int>((_) => 0);
 
+/// BAND (busy) sanoq — video ko'rilayotgan yoki murojaat (video) yozilayotgan
+/// paytда idle-taymer ASOSIY MENYUGA otib yubormaydi (uzoq ko'rish/o'qish mumkin).
+/// Ekranlar band bo'lganда +1, tugagach −1 qiladi (ref-count). >0 bo'lса idle to'xtaydi.
+final kioskBusyProvider = StateProvider<int>((_) => 0);
+
 /// Root navigator — global dialoglar (auto-update oynasi) uchun.
 final rootNavigatorKey = GlobalKey<NavigatorState>();
 

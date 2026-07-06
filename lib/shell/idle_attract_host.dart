@@ -46,6 +46,8 @@ class _IdleAttractHostState extends ConsumerState<IdleAttractHost> {
   }
 
   void _tick() {
+    // BAND (video ko'rish / video-murojaat) — idle'ни nolда ushlaymiz, asosiy menyuga OTMAYMIZ.
+    if (ref.read(kioskBusyProvider) > 0) { _idle = 0; return; }
     _idle++;
     if (_idle == Env.resetSec && !_attract) {
       final loc = ref.read(currentRouteProvider);

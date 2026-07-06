@@ -11,6 +11,8 @@ import '../../core/network/api_client.dart';
 import '../../core/network/repository.dart';
 import '../../core/theme/text_styles.dart';
 import '../../core/theme/tokens.dart';
+import '../../router.dart';
+import '../../shell/kb_attachments.dart';
 import '../../shell/kiosk_shell.dart';
 import '../common/kfield.dart';
 import '../common/widgets.dart';
@@ -42,14 +44,53 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
   WinVideoPlayerController? _review;
 
   bool _loading = false, _err = false, _sendFail = false;
+  bool _aiLoading = false;
   String? _sentId;
+
+  // Idle-taymer band nazorati (video-murojaat yozilayotganda asosiy menyuga otmasin)
+  bool _busy = false;
+  void _setBusy(bool v) {
+    if (v == _busy) return;
+    _busy = v;
+    ref.read(kioskBusyProvider.notifier).update((n) => (n + (v ? 1 : -1)).clamp(0, 9999));
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Yangi murojaat — telefonдан oldin kelgan hujjatlar bo'lsa tozalaymiz.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(kbAttachmentsProvider.notifier).clear();
+    });
+  }
 
   @override
   void dispose() {
+    _setBusy(false);
     for (final c in [_name, _surname, _patronymic, _year, _phone, _text]) c.dispose();
     _cam?.dispose();
     _review?.dispose();
     super.dispose();
+  }
+
+  // ---- AI yordamida rasmiylashtirish (chala matn → rasmiy murojaat) ----
+  Future<void> _assist() async {
+    if (_aiLoading) return;
+    final rough = _text.text.trim();
+    if (rough.length < 4) { _toast('Avval murojaat mohiyatini qisqacha yozing — AI uni rasmiy shaklga keltiradi'); return; }
+    setState(() => _aiLoading = true);
+    try {
+      final r = await ref.read(dioProvider).post('/appeal/assist', data: {'text': rough, 'lang': ref.read(localeProvider)});
+      final m = Map<String, dynamic>.from(r.data as Map);
+      final t = '${m['text'] ?? ''}'.trim();
+      if (t.isNotEmpty && mounted) {
+        _text.text = t;
+        _toast('✓ Murojaat AI yordamida rasmiylashtirildi — istasangiz tahrirlang');
+      }
+    } catch (_) {
+      _toast('AI hozir javob bermadi — matnni o‘zingiz yozib davom eting');
+    }
+    if (mounted) setState(() => _aiLoading = false);
   }
 
   // ---- Video yozish ----
@@ -118,6 +159,7 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
         videoExt = _videoPath!.toLowerCase().endsWith('.mp4') ? 'mp4' : 'webm';
       }
     } catch (_) {}
+    final atts = ref.read(kbAttachmentsProvider).map((f) => {'url': f.url, 'name': f.name, 'kind': f.kind}).toList();
     String? id;
     try {
       final r = await ref.read(dioProvider).post('/appeal', data: {
@@ -127,19 +169,23 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
         'department': _deptName, 'employee_id': _empId,
         'mode': _videoPath != null ? 'video' : 'text', 'lang': ref.read(localeProvider),
         if (videoB64 != null) 'video': videoB64, if (videoExt != null) 'videoExt': videoExt,
+        if (atts.isNotEmpty) 'attachments': atts,
       });
       id = (Map<String, dynamic>.from(r.data as Map)['id'] ?? '').toString();
     } catch (_) {}
     if (!mounted) return;
     setState(() {
       _loading = false;
-      if (id != null && id.isNotEmpty) { _sentId = id; } else { _sendFail = true; }
+      if (id != null && id.isNotEmpty) { _sentId = id; ref.read(kbAttachmentsProvider.notifier).clear(); } else { _sendFail = true; }
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final t = ref.watch(trProvider);
+    // Video-murojaat aktiv (kamera/yozish/ko'rish) yoki yuborilayotган bo'lsa — idle to'xtaydi.
+    final busy = _camOpen || _recording || _review != null || _loading;
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _setBusy(busy); });
     if (_sentId != null) {
       return KioskScaffold(body: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         PageHead(t['pAppeal'], sub: t['apSub']),
@@ -207,10 +253,36 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
             _videoSection(t),
           ])),
           const SizedBox(height: 14),
-          // 4) Matn
+          // 4) Matn + AI yordamida rasmiylashtirish
           KCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             KField(controller: _text, label: t['apText'], hint: t['apTextHint'], lines: 4),
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: _aiLoading ? null : _assist,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [Color(0xFF7A3FB0), Color(0xFF2F6FE3)]),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: T.shadow,
+                ),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  _aiLoading
+                      ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+                      : const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 24),
+                  const SizedBox(width: 10),
+                  Text(_aiLoading ? 'AI yozmoqda…' : 'AI bilan rasmiylashtirish',
+                      style: const TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w700)),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text('Muammoingizni sodda so‘zlar bilan yozing — sun’iy intellekt uni rasmiy murojaat shakliga keltiradi.',
+                style: K.pgSub.copyWith(fontSize: 14)),
           ])),
+          const SizedBox(height: 14),
+          // 5) Telefon orqali hujjat (QR-klaviatura)
+          _attachmentsCard(t),
           if (_err) ...[const SizedBox(height: 10), Text(t['apNeedFull'] ?? 'Telefon (majburiy) va matn yoki video kiriting', style: K.cardP.copyWith(color: T.errText))],
           if (_sendFail) ...[const SizedBox(height: 10), Text(t['apFail'], style: K.cardP.copyWith(color: T.errText))],
           const SizedBox(height: 16),
@@ -223,6 +295,51 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
       ),
     );
   }
+
+  // Telefon (QR-klaviatura) orqali kelgan hujjatlar — fayl / A4-rasm.
+  Widget _attachmentsCard(Map<String, dynamic> t) {
+    final atts = ref.watch(kbAttachmentsProvider);
+    return KCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _lbl('Hujjat ilova qilish (ixtiyoriy)'),
+      Row(children: [
+        const Icon(Icons.smartphone_rounded, color: T.blue, size: 22),
+        const SizedBox(width: 10),
+        Expanded(child: Text(
+          'Klaviaturadagi «📱 Ulanish» tugmasini bosib telefoningizni QR orqali ulang — telefondan fayl yuklashingiz yoki hujjatni rasmga olib (A4) yuborishingiz mumkin.',
+          style: K.pgSub.copyWith(fontSize: 15))),
+      ]),
+      if (atts.isNotEmpty) ...[
+        const SizedBox(height: 14),
+        Wrap(spacing: 12, runSpacing: 12, children: [
+          for (int i = 0; i < atts.length; i++) _attChip(atts[i], i),
+        ]),
+      ],
+    ]));
+  }
+
+  Widget _attChip(KbFile f, int i) => Container(
+        width: 150,
+        decoration: BoxDecoration(border: Border.all(color: T.line, width: 1.5), borderRadius: BorderRadius.circular(14)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          SizedBox(
+            height: 110,
+            child: f.isImage
+                ? Image.network(f.url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: T.greenTint, child: const Icon(Icons.image_rounded, color: T.green, size: 42)))
+                : Container(color: T.greenTint, alignment: Alignment.center, child: const Icon(Icons.insert_drive_file_rounded, color: T.green, size: 46)),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(children: [
+              Expanded(child: Text(f.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: T.navy, fontSize: 13, fontWeight: FontWeight.w600))),
+              GestureDetector(
+                onTap: () => ref.read(kbAttachmentsProvider.notifier).removeAt(i),
+                child: const Icon(Icons.close_rounded, color: T.errText, size: 20),
+              ),
+            ]),
+          ),
+        ]),
+      );
 
   Widget _lbl(String s) => Padding(padding: const EdgeInsets.only(bottom: 12),
       child: Text(s, style: const TextStyle(color: T.navy, fontSize: 22, fontWeight: FontWeight.w800)));

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player_win/video_player_win.dart';
 
+import '../../router.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/models.dart';
@@ -83,9 +84,18 @@ class _DocVideoCard extends ConsumerStatefulWidget {
 class _DocVideoCardState extends ConsumerState<_DocVideoCard> {
   WinVideoPlayerController? _vc;
   bool _started = false;
+  bool _busy = false;
+
+  // Video o'ynaganда idle-taymer asosiy menyuga otmasin (uzoq ko'rish mumkin).
+  void _setBusy(bool v) {
+    if (v == _busy) return;
+    _busy = v;
+    ref.read(kioskBusyProvider.notifier).update((n) => (n + (v ? 1 : -1)).clamp(0, 9999));
+  }
 
   @override
   void dispose() {
+    _setBusy(false);
     try { _vc?.dispose(); } catch (_) {}
     super.dispose();
   }
@@ -98,8 +108,9 @@ class _DocVideoCardState extends ConsumerState<_DocVideoCard> {
       await c.initialize();
       if (!mounted || !c.value.isInitialized) { try { await c.dispose(); } catch (_) {} setState(() => _started = false); return; }
       await c.setVolume(1.0);
-      c.addListener(() { if (mounted) setState(() {}); });
+      c.addListener(() { if (mounted) { _setBusy(c.value.isPlaying); setState(() {}); } });
       await c.play();
+      _setBusy(true);
       setState(() => _vc = c);
     } catch (_) {
       if (mounted) setState(() => _started = false);

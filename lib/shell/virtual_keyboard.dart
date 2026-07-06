@@ -11,6 +11,7 @@ import '../core/i18n/strings.dart';
 import '../core/network/api_client.dart';
 import '../core/theme/tokens.dart';
 import '../router.dart';
+import 'kb_attachments.dart';
 import 'vk_controller.dart';
 import 'vk_fields.dart';
 import 'vk_settings.dart';
@@ -78,6 +79,17 @@ class _VkOverlayState extends ConsumerState<VkOverlay> {
         } else if (m['action'] == 'tab') {
           _onKbConnect();
           _focusNextField(); // telefon Tab → keyingi input
+        } else if (m['file'] != null) {
+          _onKbConnect();
+          final f = Map<String, dynamic>.from(m['file'] as Map);
+          final url = '${f['url'] ?? ''}';
+          if (url.isNotEmpty) {
+            ref.read(kbAttachmentsProvider.notifier).add(KbFile(url, '${f['name'] ?? 'hujjat'}', '${f['kind'] ?? 'file'}'));
+            if (mounted) {
+              final sm = ScaffoldMessenger.maybeOf(context);
+              sm?.showSnackBar(SnackBar(content: Text('📎 Hujjat qabul qilindi: ${f['name'] ?? ''}'), backgroundColor: T.green));
+            }
+          }
         } else if (m['text'] != null) {
           _onKbConnect();
           ref.read(vkProvider.notifier).setRemoteText('${m['text']}');

@@ -9,13 +9,13 @@ class Env {
   static const canvasW = 1080.0;
   static const canvasH = 1920.0;
 
-  // Idle behaviour
-  static const resetSec = 90; // idle -> home + uz
-  static const attractSec = 120; // idle -> screensaver
+  // Idle behaviour — 5 daqiqa ishlatilmasa asosiy menyuga qaytadi (band bo'lса — otmaydi)
+  static const resetSec = 300; // idle -> home + uz (5 daqiqa)
+  static const attractSec = 330; // idle -> screensaver (bosh menyudan 30s keyin)
   static const heartbeatMs = 60000;
 
   // App version (reported via heartbeat; keep in sync with pubspec).
-  static const appVersion = '1.9.10';
+  static const appVersion = '1.9.11';
 
   // Voice timing + native VAD (dBFS amplitude from `record`; tune on Windows mic)
   static const onsetDb = -38.0; // above this = speech onset
