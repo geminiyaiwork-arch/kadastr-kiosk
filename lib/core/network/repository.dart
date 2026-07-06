@@ -96,6 +96,15 @@ final departmentsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) asy
   return ((r.data as List?) ?? const []).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
 });
 
+/// AI "yuklanmoqda" holati (7 soatlik foizli progress). {loading, progress, remaining, hours}.
+final aiWarmupProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  final r = await ref.read(dioProvider).get('/ai/warmup');
+  return Map<String, dynamic>.from(r.data as Map);
+});
+
+/// AI yuklanmoqda-payti mikrofon TINGLAMAydi (canListen shundan foydalanadi).
+final aiWarmupLoadingProvider = StateProvider<bool>((_) => false);
+
 final receptionProvider = FutureProvider<List<ReceptionManager>>((ref) async =>
     _list((await ref.read(dioProvider).get('/reception')).data, ReceptionManager.fromJson));
 

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/env.dart';
 import '../../core/i18n/strings.dart';
+import '../../core/network/api_client.dart';
 import '../../core/network/repository.dart';
 import '../../core/services/avatar_player.dart';
 import '../../core/theme/icons.dart';
@@ -24,15 +27,95 @@ class _AiScreenState extends ConsumerState<AiScreen> {
   bool _wasCorner = false;
   int _spins = 0;
 
+  // AI "yuklanmoqda" (7 soatlik foizli) holati
+  Map<String, dynamic>? _warmup;
+  Timer? _warmupPoll;
+  bool get _isWarmup => _warmup != null && _warmup!['loading'] == true;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _init());
+  }
+
+  Future<void> _init() async {
+    Map<String, dynamic> w = const {'loading': false};
+    try { w = await ref.read(aiWarmupProvider.future); } catch (_) {}
+    if (!mounted) return;
+    final loading = w['loading'] == true;
+    ref.read(aiWarmupLoadingProvider.notifier).state = loading;
+    setState(() => _warmup = w);
+    if (loading) {
+      _speakWarmup(w);
+      _warmupPoll = Timer.periodic(const Duration(seconds: 30), (_) => _refreshWarmup());
+    } else {
       final t = I18N[ref.read(localeProvider)]!;
       final vc = ref.read(voiceProvider.notifier);
       vc.resetConversation(); // eski javob/jadval tozalanadi — avatar to'liq ekranda salomlashadi
       vc.greet(t['aiGreet']);
-    });
+    }
+  }
+
+  Future<void> _refreshWarmup() async {
+    Map<String, dynamic> w;
+    try { w = Map<String, dynamic>.from((await ref.read(dioProvider).get('/ai/warmup')).data as Map); } catch (_) { return; }
+    if (!mounted) return;
+    final loading = w['loading'] == true;
+    ref.read(aiWarmupLoadingProvider.notifier).state = loading;
+    setState(() => _warmup = w);
+    if (!loading) { _warmupPoll?.cancel(); } // 7 soat tugadi → AI normal ishga tushadi
+  }
+
+  void _speakWarmup(Map<String, dynamic> w) {
+    final rem = (w['remaining'] as num?)?.round() ?? 100;
+    // "Har kirganda buncha foiz qoldi deb gapirsin" — boshqa gap qo'shilmaydi.
+    ref.read(voiceProvider.notifier).greet('Hozirda sun\'iy intellekt yuklanmoqda. $rem foiz qoldi.');
+  }
+
+  @override
+  void dispose() {
+    _warmupPoll?.cancel();
+    ref.read(aiWarmupLoadingProvider.notifier).state = false;
+    super.dispose();
+  }
+
+  // ── AI "YUKLANMOQDA" ekrani — orqada avatar, markazда foizli progress ──
+  Widget _buildWarmup(Map<String, dynamic> w) {
+    final avatar = ref.watch(avatarProvider).valueOrNull;
+    final url = (avatar?.enabled ?? false) ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}' : null;
+    final loaded = ((w['progress'] as num?)?.toDouble() ?? 0).clamp(0, 100).toDouble();
+    final remaining = (w['remaining'] as num?)?.round() ?? (100 - loaded).round();
+    return Container(
+      color: T.aiDark,
+      child: Stack(fit: StackFit.expand, children: [
+        // Avatar ORQADA (to'liq ekran, xiralashtirilgan)
+        if (url != null)
+          Opacity(opacity: 0.45, child: Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox.shrink())),
+        DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(
+          begin: Alignment.topCenter, end: Alignment.bottomCenter,
+          colors: [Colors.black.withOpacity(0.30), Colors.black.withOpacity(0.78)]))),
+        // Markaz: halqa (yuklangan foiz to'ladi) + markazда QOLGAN foiz
+        Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          SizedBox(width: 340, height: 340, child: Stack(alignment: Alignment.center, children: [
+            SizedBox(width: 340, height: 340, child: CircularProgressIndicator(
+              value: loaded / 100.0, strokeWidth: 18,
+              backgroundColor: Colors.white.withOpacity(0.15),
+              valueColor: const AlwaysStoppedAnimation(T.green))),
+            Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('$remaining%', style: const TextStyle(color: Colors.white, fontSize: 104, fontWeight: FontWeight.w900, height: 1.0)),
+              const Text('qoldi', style: TextStyle(color: Colors.white70, fontSize: 30, fontWeight: FontWeight.w600)),
+            ]),
+          ])),
+          const SizedBox(height: 48),
+          const Text('Sun\'iy intellekt yuklanmoqda', style: TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 18),
+          SizedBox(width: 520, child: LinearProgressIndicator(
+            value: loaded / 100.0, minHeight: 12,
+            backgroundColor: Colors.white.withOpacity(0.15),
+            valueColor: const AlwaysStoppedAnimation(T.green))),
+        ])),
+      ]),
+    );
   }
 
   String _status(VoiceUiState v, Map<String, dynamic> t) {
@@ -64,6 +147,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isWarmup) return _buildWarmup(_warmup!);
     final t = ref.watch(trProvider);
     final v = ref.watch(voiceProvider);
     final avatar = ref.watch(avatarProvider).valueOrNull;

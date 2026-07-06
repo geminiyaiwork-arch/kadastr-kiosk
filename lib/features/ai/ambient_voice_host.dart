@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/i18n/strings.dart';
+import '../../core/network/repository.dart';
 import '../../router.dart';
 import 'voice_controller.dart';
 
@@ -27,7 +28,7 @@ class _AmbientVoiceHostState extends ConsumerState<AmbientVoiceHost> {
       onAiPage: () => ref.read(currentRouteProvider) == '/ai',
       // /appeal (kamera mikrofonni oladi) va ZASTAVKA payti tinglamaymiz —
       // kiosk zastavka videosining ovozini o'zi eshitib o'zini uyg'otmasin.
-      canListen: () => ref.read(currentRouteProvider) != '/appeal' && !ref.read(attractProvider),
+      canListen: () => ref.read(currentRouteProvider) != '/appeal' && !ref.read(attractProvider) && !ref.read(aiWarmupLoadingProvider),
       navToAi: () => ref.read(routerProvider).go('/ai'),
       navTo: (route) => ref.read(routerProvider).go(route),
     );
