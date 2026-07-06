@@ -5,216 +5,220 @@ import '../../core/env.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/network/models.dart';
 import '../../core/network/repository.dart';
-import '../../core/theme/icons.dart';
 import '../../core/theme/text_styles.dart';
 import '../../core/theme/tokens.dart';
 import '../../shell/kiosk_shell.dart';
 import '../call/call_screen.dart';
 import '../common/widgets.dart';
 
+String _photoUrl(String p) => p.isEmpty ? '' : '${Env.apiBase}$p'; // /api/v1/turniket/photo/...
+
+/// Telefonlar → XODIMLAR direktoriyasi (grid). Bosilса — batafsil profil + qo'ng'iroq.
 class PhonesScreen extends ConsumerWidget {
   const PhonesScreen({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = ref.watch(trProvider);
     final employees = ref.watch(employeesProvider);
-    final phones = ref.watch(phonesProvider);
-    final districts = ref.watch(districtsProvider);
     return KioskScaffold(
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          PageHead(t['pPhones'], sub: t['phSub']),
-          // XODIMLAR — rasm/ism/lavozim + davomat "ichkarida" + qo'ng'iroq
-          employees.maybeWhen(
-            orElse: () => const SizedBox.shrink(),
+          PageHead(t['phEmployees'] ?? 'Xodimlar', sub: t['phSub']),
+          employees.when(
+            loading: () => const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator(color: T.green))),
+            error: (_, __) => const SizedBox.shrink(),
             data: (emps) {
-              if (emps.isEmpty) return const SizedBox.shrink();
-              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                _SectionHead(Icons.groups_rounded, t['phEmployees'] ?? 'Xodimlar bilan bog‘lanish'),
-                const SizedBox(height: 12),
-                for (final e in emps) _EmployeeCard(e),
-                const SizedBox(height: 6),
-                _SectionHead(Icons.call_rounded, t['phDirectory'] ?? 'Telefon raqamlar'),
-                const SizedBox(height: 12),
-              ]);
+              if (emps.isEmpty) {
+                return KCard(child: Text(t['phEmpty'] ?? 'Xodimlar hali qo‘shilmagan (admin panelдан qo‘shiladi)', style: K.cardP));
+              }
+              return GridView.count(
+                crossAxisCount: 2,
+                mainAxisSpacing: 16,
+                crossAxisSpacing: 16,
+                childAspectRatio: 2.55,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [for (final e in emps) _EmpCard(e)],
+              );
             },
           ),
-          AsyncView(phones, data: (list) {
-            final entries = <PhoneEntry>[...list];
-            districts.whenData((ds) {
-              for (final d in ds) {
-                if (d.phoneClean.isNotEmpty) {
-                  entries.add(PhoneEntry(name: d.name, dept: t['pDistricts'], number: d.phoneClean));
-                }
-              }
-            });
-            if (entries.isEmpty) {
-              entries.add(const PhoneEntry(name: 'Call-markaz', dept: 'Davlat kadastrlari palatasi', number: '1148'));
-            }
-            return Column(children: [for (final p in entries) _PhoneTile(p)]);
-          }),
         ],
       ),
     );
   }
 }
 
-class _SectionHead extends StatelessWidget {
-  const _SectionHead(this.icon, this.title);
-  final IconData icon;
-  final String title;
+class _EmpCard extends StatelessWidget {
+  const _EmpCard(this.e);
+  final Employee e;
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+  Widget build(BuildContext context) {
+    final live = e.inside || e.online;
+    final photo = _photoUrl(e.photo);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: e))),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: T.line),
+          boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 16, offset: Offset(0, 5))],
+        ),
         child: Row(children: [
-          Container(
-            width: 46, height: 46, alignment: Alignment.center,
-            decoration: BoxDecoration(color: T.greenTint, borderRadius: BorderRadius.circular(13)),
-            child: Icon(icon, color: T.green, size: 26),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              width: 78, height: 92, color: T.greenTint,
+              child: photo.isNotEmpty
+                  ? Image.network(photo, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.person_rounded, color: T.green, size: 44))
+                  : const Icon(Icons.person_rounded, color: T.green, size: 44),
+            ),
           ),
           const SizedBox(width: 14),
-          Text(title, style: const TextStyle(color: T.navy, fontSize: 24, fontWeight: FontWeight.w800)),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+              Row(children: [
+                Icon(Icons.circle, color: live ? T.green : T.muted, size: 11),
+                const SizedBox(width: 6),
+                Text(live ? (e.inside ? 'Onlayn' : 'Onlayn') : 'Tashqarida',
+                    style: TextStyle(color: live ? T.green : T.muted, fontSize: 14, fontWeight: FontWeight.w700)),
+              ]),
+              const SizedBox(height: 4),
+              Text(e.name, style: const TextStyle(color: T.navy, fontSize: 19, fontWeight: FontWeight.w800), maxLines: 1, overflow: TextOverflow.ellipsis),
+              if (e.position.isNotEmpty)
+                Text(e.position, style: const TextStyle(color: T.muted, fontSize: 15), maxLines: 1, overflow: TextOverflow.ellipsis),
+              if (e.dept.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Row(children: [
+                  const Icon(Icons.location_on_rounded, color: T.blue, size: 15),
+                  const SizedBox(width: 3),
+                  Expanded(child: Text(e.dept, style: const TextStyle(color: T.blue, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                ]),
+              ],
+            ]),
+          ),
+          const Icon(Icons.chevron_right_rounded, color: T.muted, size: 30),
         ]),
-      );
+      ),
+    );
+  }
 }
 
-/// Xodim kartasi — rasm + ism/lavozim + ichkarida/tashqarida + qo'ng'iroq tugmalari.
-class _EmployeeCard extends ConsumerWidget {
-  const _EmployeeCard(this.e);
-  final Employee e;
+// ─────────────────────────── BATAFSIL (mockup 2) ───────────────────────────
+class EmployeeDetailScreen extends ConsumerWidget {
+  const EmployeeDetailScreen({super.key, required this.employee});
+  final Employee employee;
 
   void _call(BuildContext context, bool video) {
-    // WebRTC qo'ng'iroq (kiosk→xodim ilovasi). Faqat online/ichkarida bo'lsa.
-    if (!(e.inside || e.online)) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        duration: const Duration(seconds: 2),
-        content: Text('${e.name} hozir joyida yo‘q — keyinroq urinib ko‘ring'),
-      ));
+    if (!(employee.inside || employee.online)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${employee.name} hozir joyida yo‘q')));
       return;
     }
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => CallScreen(employeeId: e.id, name: e.name, video: video),
-    ));
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => CallScreen(employeeId: employee.id, name: employee.name, video: video)));
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = ref.watch(trProvider);
-    final photoUrl = e.photo.isNotEmpty ? '${Env.apiOrigin}${e.photo}' : '';
+    final e = employee;
     final live = e.inside || e.online;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: T.line),
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 16, offset: Offset(0, 5))],
-      ),
-      child: Row(children: [
-        // Rasm + holat nuqtasi
-        SizedBox(
-          width: 74, height: 74,
-          child: Stack(children: [
-            Container(
-              width: 74, height: 74, clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle, color: T.greenTint,
-                border: Border.all(color: live ? T.green : T.line, width: 3),
-              ),
-              child: photoUrl.isNotEmpty
-                  ? Image.network(photoUrl, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.person_rounded, color: T.green, size: 42))
-                  : const Icon(Icons.person_rounded, color: T.green, size: 42),
-            ),
-            Positioned(
-              right: 1, bottom: 1,
-              child: Container(
-                width: 18, height: 18,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle, color: live ? T.green : T.muted,
-                  border: Border.all(color: Colors.white, width: 3),
-                ),
-              ),
-            ),
-          ]),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(e.name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: T.navy), maxLines: 1, overflow: TextOverflow.ellipsis),
-            if (e.position.isNotEmpty)
-              Text(e.position, style: K.pgSub, maxLines: 1, overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 5),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(color: (e.inside ? T.green : T.muted).withOpacity(0.12), borderRadius: BorderRadius.circular(20)),
-              child: Text(
-                e.inside ? (t['phInside'] ?? 'Ichkarida') : (e.online ? (t['phOnline'] ?? 'Onlayn') : (t['phOutside'] ?? 'Tashqarida')),
-                style: TextStyle(color: e.inside ? T.green : (e.online ? T.blue : T.muted), fontSize: 14, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ]),
-        ),
-        // Qo'ng'iroq tugmalari
-        if (e.canVoice) _callBtn(Icons.call_rounded, T.green, () => _call(context, false)),
-        if (e.canVideo) ...[
-          const SizedBox(width: 10),
-          _callBtn(Icons.videocam_rounded, T.blue, () => _call(context, true)),
+    final photo = _photoUrl(e.photo);
+    return KioskScaffold(
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PageHead(e.name, sub: t['phEmployees'] ?? 'Xodimlar'),
+          // Profil karta
+          KCard(child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Stack(children: [
+              ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(
+                width: 260, height: 320, color: T.greenTint,
+                child: photo.isNotEmpty
+                    ? Image.network(photo, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.person_rounded, color: T.green, size: 120))
+                    : const Icon(Icons.person_rounded, color: T.green, size: 120),
+              )),
+              Positioned(left: 12, bottom: 12, child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: T.shadow),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.circle, color: live ? T.green : T.muted, size: 11),
+                  const SizedBox(width: 6),
+                  Text(live ? 'Onlayn' : 'Tashqarida', style: TextStyle(color: live ? T.green : T.muted, fontSize: 14, fontWeight: FontWeight.w700)),
+                ]),
+              )),
+            ]),
+            const SizedBox(width: 24),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(e.name, style: const TextStyle(color: T.navy, fontSize: 30, fontWeight: FontWeight.w800)),
+              if (e.position.isNotEmpty) Text(e.position, style: const TextStyle(color: T.muted, fontSize: 19)),
+              const SizedBox(height: 16),
+              if (e.dept.isNotEmpty) _row(Icons.work_rounded, 'Bo‘lim', e.dept),
+              if (e.address.isNotEmpty) _row(Icons.location_on_rounded, 'Manzil', e.address),
+              if (e.email.isNotEmpty) _row(Icons.email_rounded, 'Email', e.email),
+              if (e.schedule.isNotEmpty) _row(Icons.event_rounded, 'Ish vaqti', e.schedule),
+              if (e.position.isNotEmpty) _row(Icons.badge_rounded, 'Lavozim', e.position, last: true),
+            ])),
+          ])),
+          const SizedBox(height: 14),
+          // Amal tugmalari
+          KCard(child: Row(children: [
+            if (e.canVoice) _act(Icons.call_rounded, t['phCall'] ?? 'Qo‘ng‘iroq qilish', T.green, () => _call(context, false)),
+            if (e.canVideo) _act(Icons.videocam_rounded, t['phVideo'] ?? 'Video qo‘ng‘iroq', T.blue, () => _call(context, true)),
+            _act(Icons.chat_bubble_rounded, t['phMsg'] ?? 'Xabar yozish', T.blue, () =>
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t['phSoon'] ?? 'Tez kunda')))),
+            _act(Icons.ios_share_rounded, t['phMore'] ?? 'Boshqa', T.blue, () =>
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t['phSoon'] ?? 'Tez kunda')))),
+          ])),
+          const SizedBox(height: 14),
+          // Qo'shimcha ma'lumotlar
+          if (e.education.isNotEmpty || e.specialization.isNotEmpty || e.experience.isNotEmpty || e.rating.isNotEmpty)
+            KCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(t['phExtra'] ?? 'Qo‘shimcha ma’lumotlar', style: const TextStyle(color: T.navy, fontSize: 22, fontWeight: FontWeight.w800))),
+              if (e.education.isNotEmpty) _erow(Icons.menu_book_rounded, 'Ma’lumot', e.education),
+              if (e.specialization.isNotEmpty) _erow(Icons.account_balance_rounded, 'Mutaxassisligi', e.specialization),
+              if (e.experience.isNotEmpty) _erow(Icons.work_history_rounded, 'Ish tajribasi', e.experience),
+              if (e.rating.isNotEmpty) _erow(Icons.star_rounded, 'Baholash', '${e.rating} / 5 ⭐', last: true),
+            ])),
         ],
-      ]),
+      ),
     );
   }
 
-  Widget _callBtn(IconData ic, Color color, VoidCallback onTap) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 58, height: 58,
-          decoration: BoxDecoration(
-            color: color, shape: BoxShape.circle,
-            boxShadow: [BoxShadow(color: color.withOpacity(0.4), blurRadius: 12, offset: const Offset(0, 4))],
-          ),
-          child: Icon(ic, color: Colors.white, size: 28),
+  Widget _row(IconData ic, String label, String value, {bool last = false}) => Padding(
+        padding: EdgeInsets.only(bottom: last ? 0 : 12),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(ic, color: T.blue, size: 22),
+          const SizedBox(width: 12),
+          Text(label, style: const TextStyle(color: T.muted, fontSize: 17)),
+          const SizedBox(width: 12),
+          Expanded(child: Text(value, textAlign: TextAlign.right, style: const TextStyle(color: T.navy, fontSize: 17, fontWeight: FontWeight.w700))),
+        ]),
+      );
+
+  Widget _act(IconData ic, String label, Color color, VoidCallback onTap) => Expanded(
+        child: GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Column(children: [
+            Icon(ic, color: color, size: 42),
+            const SizedBox(height: 8),
+            Text(label, textAlign: TextAlign.center, style: const TextStyle(color: T.navy, fontSize: 15, fontWeight: FontWeight.w600)),
+          ]),
         ),
+      );
+
+  Widget _erow(IconData ic, String label, String value, {bool last = false}) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(border: last ? null : const Border(bottom: BorderSide(color: T.line))),
+        child: Row(children: [
+          Icon(ic, color: T.blue, size: 22),
+          const SizedBox(width: 12),
+          Expanded(child: Text(label, style: const TextStyle(color: T.muted, fontSize: 17))),
+          Text(value, style: const TextStyle(color: T.navy, fontSize: 18, fontWeight: FontWeight.w700)),
+        ]),
       );
 }
 
-class _PhoneTile extends StatelessWidget {
-  const _PhoneTile(this.p);
-  final PhoneEntry p;
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: T.line, width: 1.5),
-        borderRadius: BorderRadius.circular(T.rCard),
-        boxShadow: T.shadow,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 58, height: 58,
-            decoration: BoxDecoration(color: T.greenTint, borderRadius: BorderRadius.circular(16)),
-            alignment: Alignment.center,
-            child: kIcon('phone', size: 32, color: T.green),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(p.name, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: T.ink)),
-                if (p.dept.isNotEmpty) Text(p.dept, style: const TextStyle(fontSize: 20, color: T.muted)),
-              ],
-            ),
-          ),
-          Text(p.number, style: const TextStyle(fontSize: 27, fontWeight: FontWeight.w800, color: T.navy)),
-        ],
-      ),
-    );
-  }
-}

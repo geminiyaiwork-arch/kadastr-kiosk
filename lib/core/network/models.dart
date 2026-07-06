@@ -91,19 +91,26 @@ class PhoneEntry {
 class Employee {
   final int id;
   final String name, position, dept, phone, role, photo;
+  final String email, address, schedule, education, specialization, experience, rating;
   final bool inside, online;
   final Map<String, dynamic> features;
   const Employee({
     required this.id, required this.name, required this.position, required this.dept,
     required this.phone, required this.role, required this.photo,
+    required this.email, required this.address, required this.schedule,
+    required this.education, required this.specialization, required this.experience, required this.rating,
     required this.inside, required this.online, required this.features,
   });
   bool get canVideo => features['video'] != false;
   bool get canVoice => features['calls'] != false;
+  bool get canSms => features['sms'] == true;
   factory Employee.fromJson(Map<String, dynamic> j) => Employee(
         id: (j['id'] as num?)?.toInt() ?? 0,
         name: _s(j['name']), position: _s(j['position']), dept: _s(j['dept']),
         phone: _s(j['phone']), role: _s(j['role']), photo: _s(j['photo']),
+        email: _s(j['email']), address: _s(j['address']), schedule: _s(j['schedule']),
+        education: _s(j['education']), specialization: _s(j['specialization']),
+        experience: _s(j['experience']), rating: _s(j['rating']),
         inside: j['inside'] == true, online: j['is_online'] == true,
         features: (j['features'] is Map) ? Map<String, dynamic>.from(j['features'] as Map) : const {},
       );
