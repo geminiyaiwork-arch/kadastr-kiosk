@@ -30,6 +30,11 @@ class _CallScreenState extends ConsumerState<CallScreen> {
   String _status = 'ulanmoqda…';
   bool _connected = false;
   bool _ended = false;
+  final List<Map<String, dynamic>> _pendCands = []; // call_id kelmaguncha buferlangan ICE nomzodlar
+
+  void _postCand(Map<String, dynamic> cand) {
+    ref.read(dioProvider).post('/call/ice', data: {'call_id': _callId, 'side': 'k', 'candidate': cand}).catchError((_) => null);
+  }
 
   @override
   void initState() {
@@ -49,7 +54,9 @@ class _CallScreenState extends ConsumerState<CallScreen> {
       _pc = await createPeerConnection({
         'iceServers': [
           {'urls': 'stun:stun.l.google.com:19302'},
-          {'urls': 'stun:stun1.l.google.com:19302'},
+          // O'z serverimizdagi TURN (har qanday tarmoqda ovoz/video oqadi)
+          {'urls': 'turn:213.230.121.40:3478', 'username': 'kadastr', 'credential': 'KadastrTurn2026uz'},
+          {'urls': 'turn:213.230.121.40:3478?transport=tcp', 'username': 'kadastr', 'credential': 'KadastrTurn2026uz'},
         ],
       });
       for (final tr in _stream!.getTracks()) {
@@ -62,12 +69,10 @@ class _CallScreenState extends ConsumerState<CallScreen> {
         }
       };
       _pc!.onIceCandidate = (c) {
-        if (c.candidate != null && _callId != null) {
-          ref.read(dioProvider).post('/call/ice', data: {
-            'call_id': _callId, 'side': 'k',
-            'candidate': {'candidate': c.candidate, 'sdpMid': c.sdpMid, 'sdpMLineIndex': c.sdpMLineIndex},
-          }).catchError((_) => null);
-        }
+        if (c.candidate == null) return;
+        final cand = {'candidate': c.candidate, 'sdpMid': c.sdpMid, 'sdpMLineIndex': c.sdpMLineIndex};
+        if (_callId == null) { _pendCands.add(cand); return; } // call_id kelmagunча bufer (yo'qolmasin)
+        _postCand(cand);
       };
       final offer = await _pc!.createOffer();
       await _pc!.setLocalDescription(offer);
@@ -78,6 +83,8 @@ class _CallScreenState extends ConsumerState<CallScreen> {
       final data = Map<String, dynamic>.from(r.data as Map);
       if (data['online'] == false) { _fail('Xodim hozir joyida yo‘q'); return; }
       _callId = data['call_id']?.toString();
+      for (final c in _pendCands) { _postCand(c); } // buferdagi nomzodlarni yuborish (host-nomzod yo'qolmaydi)
+      _pendCands.clear();
       if (mounted) setState(() => _status = 'javob kutilmoqda…');
       _poll = Timer.periodic(const Duration(milliseconds: 900), (_) => _tick());
     } catch (e) {
