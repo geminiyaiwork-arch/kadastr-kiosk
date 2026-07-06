@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -29,21 +31,37 @@ class _PhonesScreenState extends ConsumerState<PhonesScreen> {
   bool _messaging = false, _msgOffline = false, _sending = false, _sentMsg = false;
   final _msgText = TextEditingController();
   final _msgPhone = TextEditingController();
+  Timer? _refresh;
+
+  @override
+  void initState() {
+    super.initState();
+    // Xodim onlayn holatini yangilab turamiz (hodim ilovasi heartbeat → 45s deraza).
+    // Ilova endigina onlayn bo'lса ham kiosk tez ko'radi (aks holda bir marta olib qolardi).
+    _refresh = Timer.periodic(const Duration(seconds: 12), (_) {
+      if (mounted && !_calling) ref.invalidate(employeesProvider);
+    });
+  }
 
   @override
   void dispose() {
+    _refresh?.cancel();
     _msgText.dispose();
     _msgPhone.dispose();
     super.dispose();
   }
 
+  Employee _fresh(Employee e) =>
+      ref.read(employeesProvider).asData?.value.firstWhere((x) => x.id == e.id, orElse: () => e) ?? e;
+
   void _startCall(Employee e, bool video) {
-    if (!(e.inside || e.online)) {
+    final f = _fresh(e); // eng so'nggi onlayn holat (ilova endigina ulanган bo'lishi mumkin)
+    if (!(f.inside || f.online)) {
       // Xodim oflayn — qo'ng'iroq o'rniga xabar qoldirishni taklif qilamiz (ilova/adminга tushadi).
-      setState(() { _sel = e; _messaging = true; _msgOffline = true; _sentMsg = false; });
+      setState(() { _sel = f; _messaging = true; _msgOffline = true; _sentMsg = false; });
       return;
     }
-    setState(() { _sel = e; _callVideo = video; _calling = true; });
+    setState(() { _sel = f; _callVideo = video; _calling = true; });
   }
 
   void _openMessage(Employee e) => setState(() { _sel = e; _messaging = true; _msgOffline = false; _sentMsg = false; });
@@ -86,7 +104,7 @@ class _PhonesScreenState extends ConsumerState<PhonesScreen> {
       body: _sel == null
           ? _grid(t, employees)
           : _EmployeeDetail(
-              employee: _sel!,
+              employee: _fresh(_sel!), // jonli onlayn holat (12s'да yangilanadi)
               onBack: () => setState(() => _sel = null),
               onCall: (v) => _startCall(_sel!, v),
               onMessage: () => _openMessage(_sel!),
@@ -156,16 +174,16 @@ class _PhonesScreenState extends ConsumerState<PhonesScreen> {
   }
 
   Widget _grid(Map<String, dynamic> t, AsyncValue<List<Employee>> employees) {
+    // valueOrNull — 12s yangilanишда oldingi ro'yxat qoladi (spinner miltillamaydi).
+    final emps = employees.valueOrNull;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       PageHead(t['phEmployees'] ?? 'Xodimlar', sub: t['phSub'] ?? 'Xodim bilan bevosita bog‘laning'),
-      employees.when(
-        loading: () => const Padding(padding: EdgeInsets.all(60), child: Center(child: CircularProgressIndicator(color: T.green))),
-        error: (_, __) => _empty(t),
-        data: (emps) {
-          if (emps.isEmpty) return _empty(t);
-          return Column(children: [for (final e in emps) _EmpCard(e, onTap: () => setState(() => _sel = e))]);
-        },
-      ),
+      if (emps == null)
+        const Padding(padding: EdgeInsets.all(60), child: Center(child: CircularProgressIndicator(color: T.green)))
+      else if (emps.isEmpty)
+        _empty(t)
+      else
+        Column(children: [for (final e in emps) _EmpCard(e, onTap: () => setState(() => _sel = e))]),
     ]);
   }
 
