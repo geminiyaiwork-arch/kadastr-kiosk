@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -34,6 +35,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
   Timer? _durTimer;
   int _dur = 0; // suhbat davomiyligi (soniya)
   String get _durText { final m = _dur ~/ 60, s = _dur % 60; return '$m:${s.toString().padLeft(2, '0')}'; }
+  final _ring = AudioPlayer(); // ringback ("chaqirilyapti") ohang — call.wav loop
 
   void _postCand(Map<String, dynamic> cand) {
     ref.read(dioProvider).post('/call/ice', data: {'call_id': _callId, 'side': 'k', 'candidate': cand}).catchError((_) => null);
@@ -67,6 +69,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
       }
       _pc!.onTrack = (e) {
         if (e.streams.isNotEmpty) {
+          _ring.stop(); // ulandi → ringback to'xta
           _remote.srcObject = e.streams[0];
           if (mounted) setState(() { _connected = true; _status = widget.name; });
           _durTimer ??= Timer.periodic(const Duration(seconds: 1), (_) { if (mounted) setState(() => _dur++); }); // vaqt hisoblagich
@@ -90,6 +93,10 @@ class _CallScreenState extends ConsumerState<CallScreen> {
       for (final c in _pendCands) { _postCand(c); } // buferdagi nomzodlarni yuborish (host-nomzod yo'qolmaydi)
       _pendCands.clear();
       if (mounted) setState(() => _status = 'Chaqirilyapti…');
+      try { // ringback best-effort — asset muammosi qo'ng'iroqni buzmasin
+        await _ring.setReleaseMode(ReleaseMode.loop);
+        await _ring.play(AssetSource('audio/call.wav'));
+      } catch (_) {}
       _poll = Timer.periodic(const Duration(milliseconds: 900), (_) => _tick());
     } catch (e) {
       _fail('Qo‘ng‘iroq boshlanmadi');
@@ -119,6 +126,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
   }
 
   void _fail(String msg) {
+    _ring.stop(); // xato → ringback darhol to'xta (2s _close ni kutmaymiz)
     if (mounted) setState(() => _status = msg);
     Future.delayed(const Duration(seconds: 2), _close);
   }
@@ -133,6 +141,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
     _ended = true;
     _poll?.cancel();
     _durTimer?.cancel();
+    try { await _ring.stop(); } catch (_) {}
     try { for (final t in _stream?.getTracks() ?? const []) { await t.stop(); } } catch (_) {}
     try { await _pc?.close(); } catch (_) {}
     try { await _local.dispose(); } catch (_) {}
@@ -143,7 +152,14 @@ class _CallScreenState extends ConsumerState<CallScreen> {
 
   @override
   void dispose() {
-    if (!_ended) { _poll?.cancel(); try { _pc?.close(); } catch (_) {} }
+    if (!_ended) { // _close chaqirilmagan bo'lsa — kamera/renderer'larni shu yerda tozalaymiz (leak yo'q)
+      _poll?.cancel();
+      _durTimer?.cancel();
+      try { _pc?.close(); } catch (_) {}
+      try { for (final t in _stream?.getTracks() ?? const []) { t.stop(); } } catch (_) {}
+      try { _local.dispose(); _remote.dispose(); } catch (_) {}
+    }
+    try { _ring.dispose(); } catch (_) {} // ringback player resurs oqishini oldini oladi
     super.dispose();
   }
 
