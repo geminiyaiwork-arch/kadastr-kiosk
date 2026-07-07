@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:video_player_win/video_player_win.dart';
 
 import '../../core/env.dart';
 import '../../core/i18n/strings.dart';
@@ -170,7 +171,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
         //  javob bor (jim)                 -> yuqori-o'ng burchakda kichik DUMALOQ
         //  javob yo'q (jim)                -> TO'LIQ ekran (rasm)
         const corner = 210.0;
-        ref.watch(avatarPlayerProvider); // video boshlanganda rebuild (Builder controllerni oladi)
+        final ap = ref.watch(avatarPlayerProvider); // video boshlanganda rebuild (Builder controllerni oladi)
         // MA'LUMOTLI javob -> avatar BURCHAKDA (gapirayotganda ham — video doirada),
         // javob ekranda ko'rinib turadi. Ma'lumotsiz (salomlashuv/persona) -> TO'LIQ ekran.
         final rect = hasData
@@ -212,8 +213,23 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                             : null),
                   ),
                   child: Builder(builder: (context) {
-                    // Video moduli olib tashlangan (SAC libmpv DLL'ni bloklaydi) —
-                    // avatar STATIK rasm sifatida ko'rsatiladi, javob TTS ovozida.
+                    // MULOQAT javobida (salom/persona) LAB-SINXRON video generatsiya qilinadi
+                    // (video_player_win = Windows Media Foundation, SAC-xavfsiz). Video faol
+                    // bo'lsa — to'liq ekran; aks holda STATIK avatar rasmi (ma'lumotli javob:
+                    // avatar burchakda statik, ovoz TTS).
+                    final vc = ap.controller;
+                    if (vc != null && vc.value.isInitialized) {
+                      final vs = vc.value.size;
+                      return FittedBox(
+                        fit: BoxFit.cover,
+                        clipBehavior: Clip.hardEdge,
+                        child: SizedBox(
+                          width: vs.width <= 0 ? 720 : vs.width,
+                          height: vs.height <= 0 ? 1280 : vs.height,
+                          child: WinVideoPlayer(vc),
+                        ),
+                      );
+                    }
                     return (enabled && url != null)
                         ? Image.network(url,
                             fit: BoxFit.cover,
@@ -335,15 +351,41 @@ class _AiScreenState extends ConsumerState<AiScreen> {
   }
 }
 
-/// MOCKUP uslubidagi javob: yaltiroq-belgi + raqamlari INDIGO-BOLD matn-karta,
-/// har qatori RANGLI IKONKA-BELGILI jadval (Nomi | Soni), yumaloq oq kartalar.
-class _AnswerView extends StatelessWidget {
+/// MOCKUP (1:1) uslubidagi javob: OLOV-belgili + raqamlari INDIGO-BOLD matn-karta,
+/// QIDIRUV maydoni ("Tuman yoki shahar nomini qidiring...") + har qatori RANGLI
+/// IKONKA-BELGILI + KO'K SON + chevron ro'yxat (Nomi | Soni), yumaloq oq kartalar.
+/// StatefulWidget \u2014 qidiruv ro'yxatni jonli filtrlaydi.
+class _AnswerView extends StatefulWidget {
   const _AnswerView({required this.text, required this.table});
   final String text;
   final List<List<dynamic>>? table;
 
+  @override
+  State<_AnswerView> createState() => _AnswerViewState();
+}
+
+class _AnswerViewState extends State<_AnswerView> {
   static const _ink = Color(0xFF232A4D);
   static const _indigo = Color(0xFF5457F5);
+
+  final _searchCtrl = TextEditingController();
+  String _q = '';
+
+  @override
+  void didUpdateWidget(covariant _AnswerView old) {
+    super.didUpdateWidget(old);
+    // Yangi javob kelsa qidiruv tozalanadi (eski filtr yopishib qolmasin).
+    if (old.text != widget.text) {
+      _q = '';
+      _searchCtrl.clear();
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   String _cell(dynamic v) {
     final s = '$v';
@@ -367,42 +409,44 @@ class _AnswerView extends StatelessWidget {
     return out;
   }
 
-  /// Qator uchun mavzuga mos ikonka + rang (mockup: odamlar/uy/pin/bino).
+  /// Qator uchun mavzuga mos ikonka + rang (mockup: bino/uy/pin/odamlar).
   (IconData, Color, Color) _badge(String label, int i) {
     final l = label.toLowerCase();
-    if (l.contains('tuman') || l.contains('shahar') || l.contains('mahalla') || l.contains('aholi')) {
-      return (Icons.groups_rounded, const Color(0xFFEDE7FE), const Color(0xFF7C5CFC));
-    }
     if (l.contains('mulk') || l.contains('uy') || l.contains('xonadon')) {
       return (Icons.home_rounded, const Color(0xFFE3F0FE), const Color(0xFF2E90FA));
     }
     if (l.contains('yer') || l.contains('uchastka') || l.contains('maydon')) {
       return (Icons.location_on_rounded, const Color(0xFFE2F8EC), const Color(0xFF16B364));
     }
-    if (l.contains('xatlov') || l.contains('obyekt') || l.contains('bino') || l.contains('ariza')) {
-      return (Icons.apartment_rounded, const Color(0xFFFEF0E1), const Color(0xFFF79009));
+    if (l.contains('aholi') || l.contains('mahalla')) {
+      return (Icons.groups_rounded, const Color(0xFFEDE7FE), const Color(0xFF7C5CFC));
     }
-    const cyc = [
-      (Icons.groups_rounded, Color(0xFFEDE7FE), Color(0xFF7C5CFC)),
-      (Icons.home_rounded, Color(0xFFE3F0FE), Color(0xFF2E90FA)),
-      (Icons.location_on_rounded, Color(0xFFE2F8EC), Color(0xFF16B364)),
-      (Icons.apartment_rounded, Color(0xFFFEF0E1), Color(0xFFF79009)),
-    ];
-    return cyc[i % cyc.length];
+    // tuman/shahar/bino/xatlov/ariza \u2014 asosiy hol: bino ikonasi (mockupdagidek)
+    return (Icons.apartment_rounded, const Color(0xFFE7ECFE), const Color(0xFF3B5BFE));
   }
 
   @override
   Widget build(BuildContext context) {
-    final rows = table ?? const <List<dynamic>>[];
-    final hasTable = rows.isNotEmpty;
-    final headed =
-        rows.isNotEmpty && rows[0].length > 1 && num.tryParse('${rows[0][1]}'.replaceAll(RegExp(r'[\s\u00A0]'), '')) == null;
+    final text = widget.text;
+    final allRows = widget.table ?? const <List<dynamic>>[];
+    final hasTable = allRows.isNotEmpty;
+    final headed = allRows.isNotEmpty &&
+        allRows[0].length > 1 &&
+        num.tryParse('${allRows[0][1]}'.replaceAll(RegExp(r'[\s\u00A0]'), '')) == null;
+    final header = headed ? allRows[0] : const <dynamic>['Nomi', 'Soni'];
+    final bodyAll = headed ? allRows.sublist(1) : allRows;
+    // QIDIRUV filtri \u2014 nom bo'yicha (bo'sh so'rov\u0434\u0430 hammasi).
+    final ql = _q.trim().toLowerCase();
+    final body = ql.isEmpty
+        ? bodyAll
+        : bodyAll.where((r) => '${r.isNotEmpty ? r[0] : ''}'.toLowerCase().contains(ql)).toList();
     final fs = text.length > 220 ? 27.0 : 31.0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // MATN-KARTA: yaltiroq-belgi + raqamlari ajratilgan matn
+        // 1) MATN-KARTA: OLOV-belgisi + raqamlari ajratilgan matn (mockup 1:1)
         Container(
           padding: const EdgeInsets.all(26),
           decoration: BoxDecoration(
@@ -416,8 +460,15 @@ class _AnswerView extends StatelessWidget {
               Container(
                 width: 64,
                 height: 64,
-                decoration: BoxDecoration(color: const Color(0xFFDCDDFB), borderRadius: BorderRadius.circular(18)),
-                child: const Icon(Icons.auto_awesome, color: _indigo, size: 34),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFF8A3D), Color(0xFFFF5B79)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: const Icon(Icons.local_fire_department_rounded, color: Colors.white, size: 36),
               ),
               const SizedBox(width: 22),
               Expanded(child: RichText(text: TextSpan(children: _rich(text, fs)))),
@@ -425,7 +476,46 @@ class _AnswerView extends StatelessWidget {
           ),
         ),
         if (hasTable) ...[
-          const SizedBox(height: 22),
+          const SizedBox(height: 20),
+          // 2) QIDIRUV maydoni \u2014 "Tuman yoki shahar nomini qidiring..."
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: const [BoxShadow(color: Color(0x1229306B), offset: Offset(0, 5), blurRadius: 18)],
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.search_rounded, color: Color(0xFF9AA1C7), size: 30),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: TextField(
+                    controller: _searchCtrl,
+                    onChanged: (v) => setState(() => _q = v),
+                    style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w600, color: _ink),
+                    decoration: const InputDecoration(
+                      isCollapsed: true,
+                      contentPadding: EdgeInsets.symmetric(vertical: 22),
+                      border: InputBorder.none,
+                      hintText: 'Tuman yoki shahar nomini qidiring...',
+                      hintStyle: TextStyle(fontSize: 25, fontWeight: FontWeight.w500, color: Color(0xFFAAB0D0)),
+                    ),
+                  ),
+                ),
+                if (_q.isNotEmpty)
+                  GestureDetector(
+                    onTap: () => setState(() {
+                      _q = '';
+                      _searchCtrl.clear();
+                    }),
+                    child: const Icon(Icons.close_rounded, color: Color(0xFF9AA1C7), size: 28),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          // 3) RO'YXAT \u2014 ikonka + nom + ko'k son + chevron
           Flexible(
             child: Container(
               clipBehavior: Clip.antiAlias,
@@ -443,19 +533,25 @@ class _AnswerView extends StatelessWidget {
                       child: Row(
                         children: [
                           Expanded(
-                              child: Text(headed ? '${rows[0][0]}' : 'Nomi',
+                              child: Text('${header.isNotEmpty ? header[0] : 'Nomi'}',
                                   style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _ink))),
-                          Text(headed && rows[0].length > 1 ? '${rows[0][1]}' : 'Soni',
+                          Text('${header.length > 1 ? header[1] : 'Soni'}',
                               style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _ink)),
                         ],
                       ),
                     ),
-                    for (var i = headed ? 1 : 0; i < rows.length; i++)
+                    if (body.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 40),
+                        child: Text('Topilmadi',
+                            style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600, color: Color(0xFF9AA1C7))),
+                      ),
+                    for (var i = 0; i < body.length; i++)
                       Builder(builder: (context) {
-                        final label = '${rows[i].isNotEmpty ? rows[i][0] : ''}';
+                        final label = '${body[i].isNotEmpty ? body[i][0] : ''}';
                         final b = _badge(label, i);
                         return Container(
-                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 26),
+                          padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 24),
                           decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFEDEFF9)))),
                           child: Row(
                             children: [
@@ -465,16 +561,16 @@ class _AnswerView extends StatelessWidget {
                                 decoration: BoxDecoration(color: b.$2, borderRadius: BorderRadius.circular(16)),
                                 child: Icon(b.$1, color: b.$3, size: 32),
                               ),
-                              const SizedBox(width: 22),
+                              const SizedBox(width: 20),
                               Expanded(
                                   child: Text(label,
                                       style: const TextStyle(fontSize: 29, fontWeight: FontWeight.w600, color: _ink))),
-                              const SizedBox(width: 16),
-                              Flexible(
-                                  child: Text(rows[i].length > 1 ? _cell(rows[i][1]) : '',
-                                      textAlign: TextAlign.right,
-                                      style:
-                                          const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: _indigo))),
+                              const SizedBox(width: 14),
+                              Text(body[i].length > 1 ? _cell(body[i][1]) : '',
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: _indigo)),
+                              const SizedBox(width: 12),
+                              const Icon(Icons.chevron_right_rounded, color: Color(0xFFC2C8E4), size: 34),
                             ],
                           ),
                         );

@@ -139,7 +139,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   Future<void> greet(String text) async {
     if (_busy) return;
     _busy = true;
-    await _speak(text);
+    await _speak(text, video: true); // salomlashuv — muloqat → video generatsiya
   }
 
   Future<void> _loop() async {
@@ -168,7 +168,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         // AI sahifasida TUSHUNARSIZ gap — qaytadan so'raymiz (20s cooldown:
         // fon shovqinida har 3.6s "tushunmadim" spam bo'lmasin)
         _lastRepeat = DateTime.now();
-        await _speak(_repeatPrompt());
+        await _speak(_repeatPrompt(), video: true);
       } else {
         _busy = false;
       }
@@ -329,7 +329,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       // "Kadastr AI" (yolg'iz ism) — "Eshitaman..." deymiz va KEYINGI gap
       // 15 soniya ichida ISMSIZ qabul qilinadi (bir martalik)
       _followUntil = DateTime.now().add(const Duration(seconds: 15));
-      await _speak(_prompt());
+      await _speak(_prompt(), video: true);
     }
   }
 
@@ -432,7 +432,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       }
     } else {
       // Tushunarsiz — avatar to'liq ekranda qoladi (karta chiqarilmaydi), faqat ovozda so'raydi
-      await _speak(_repeatPrompt());
+      await _speak(_repeatPrompt(), video: true);
     }
   }
 
@@ -458,7 +458,8 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     } else {
       state = state.copyWith(answer: answer, table: table, clearTable: table == null);
     }
-    await _speak(answer);
+    // persona (muloqat) → video generatsiya; ma'lumot → karta + TTS
+    await _speak(answer, video: persona);
   }
 
   /// Telefon ovozli pultдан kelgan buyruq (QR orqali) — wake-word shart emas, to'g'ridan-to'g'ri bajaradi.
@@ -482,7 +483,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (q.length >= 2) {
       await askAI(q);
     } else {
-      await _speak(_prompt());
+      await _speak(_prompt(), video: true);
     }
   }
 
@@ -504,7 +505,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         'en': 'Sorry, I did not understand. Please say it again.',
       }[_lang]!;
 
-  Future<void> _speak(String text) async {
+  /// [video] = MULOQAT javobi (salom/persona/prompt) → LAB-SINXRON video generatsiya.
+  /// Ma'lumotli javoblarda `false` (avatar burchakda statik + karta, ovoz TTS).
+  Future<void> _speak(String text, {bool video = false}) async {
     final clean = text.replaceAll(RegExp(r'<[^>]+>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
     if (clean.isEmpty) {
       _busy = false;
@@ -520,19 +523,23 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       } catch (_) {}
     }
     final voice = (avCfg?.male ?? false) ? 'sardor' : 'madina';
-    // 1) JONLI AVATAR: gapirganda LAB-SINXRON video generatsiya qilinadi (ovoz ham ichida),
-    //    jim turganda oddiy rasm. Muvaffaqiyatda oddiy TTS chalinmaydi (ikki ovoz bo'lmasin).
-    try {
-      final ap = ref.read(avatarPlayerProvider.notifier);
-      state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
-      final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
-      if (ok) {
-        state = state.copyWith(speaking: false);
-        _busy = false;
-        return;
-      }
-      // video bo'lmadi — pastdagi oddiy TTS'ga tushamiz
-    } catch (_) {}
+    // 1) JONLI AVATAR (FAQAT muloqat/persona/salomlashuv savollarida): gapirganda
+    //    LAB-SINXRON video generatsiya qilinadi (ovoz ham ichida), jim turganda oddiy
+    //    rasm. Muvaffaqiyatда oddiy TTS chalinmaydi (ikki ovoz bo'lmasin). Ma'lumotli
+    //    javobda video YO'Q — avatar burchakda, karta ko'rinadi, javob TTS'da.
+    if (video) {
+      try {
+        final ap = ref.read(avatarPlayerProvider.notifier);
+        state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
+        final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
+        if (ok) {
+          state = state.copyWith(speaking: false);
+          _busy = false;
+          return;
+        }
+        // video bo'lmadi — pastdagi oddiy TTS'ga tushamiz
+      } catch (_) {}
+    }
     final url = '${Env.apiBase}/tts/synthesize?text=${Uri.encodeComponent(clean.substring(0, min(clean.length, 800)))}'
         '&voice=$voice&lang=$_lang';
     // ignore: avoid_print
