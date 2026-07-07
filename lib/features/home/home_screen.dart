@@ -10,6 +10,7 @@ import '../../core/theme/text_styles.dart';
 import '../../core/theme/tokens.dart';
 import '../../core/util/fmt.dart';
 import '../../shell/kiosk_shell.dart';
+import '../ai/voice_controller.dart';
 import '../common/svc_tile.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -47,7 +48,11 @@ class HomeScreen extends ConsumerWidget {
                   icon: svcList[i].$2,
                   label: svc[i],
                   variant: svcList[i].$3,
-                  onTap: () => context.go('/${svcList[i].$1}'),
+                  onTap: () {
+                    final route = '/${svcList[i].$1}';
+                    ref.read(voiceProvider.notifier).announcePage(route); // manual bosishда ovoz
+                    context.go(route);
+                  },
                 ),
             ],
           ),

@@ -446,31 +446,25 @@ class _AnswerViewState extends State<_AnswerView> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 1) MATN-KARTA: OLOV-belgisi + raqamlari ajratilgan matn (mockup 1:1)
-        Container(
-          padding: const EdgeInsets.all(26),
-          decoration: BoxDecoration(
-            color: const Color(0xFFE9EAFB),
-            borderRadius: BorderRadius.circular(28),
-            boxShadow: const [BoxShadow(color: Color(0x1A29306B), offset: Offset(0, 8), blurRadius: 26)],
-          ),
+        // 1) MATN: kichik OLOV ikonasi (ko'k gradient) + raqamlari ko'k-bold matn.
+        //    Mockup 1:1 — KARTASIZ (matn to'g'ridan-to'g'ri och fonда), avatar yuqori-o'ngда.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFFF8A3D), Color(0xFFFF5B79)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(18),
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: ShaderMask(
+                  shaderCallback: (r) => const LinearGradient(
+                    colors: [Color(0xFF4B7BFF), Color(0xFF7C5CFC)],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ).createShader(r),
+                  child: const Icon(Icons.local_fire_department_rounded, color: Colors.white, size: 40),
                 ),
-                child: const Icon(Icons.local_fire_department_rounded, color: Colors.white, size: 36),
               ),
-              const SizedBox(width: 22),
+              const SizedBox(width: 14),
               Expanded(child: RichText(text: TextSpan(children: _rich(text, fs)))),
             ],
           ),
@@ -503,14 +497,17 @@ class _AnswerViewState extends State<_AnswerView> {
                     ),
                   ),
                 ),
-                if (_q.isNotEmpty)
-                  GestureDetector(
-                    onTap: () => setState(() {
-                      _q = '';
-                      _searchCtrl.clear();
-                    }),
-                    child: const Icon(Icons.close_rounded, color: Color(0xFF9AA1C7), size: 28),
-                  ),
+                // Mockup 1:1: o'ngда sliders(filter) ikonasi; yozilганда X (tozalash)
+                GestureDetector(
+                  onTap: _q.isEmpty
+                      ? null
+                      : () => setState(() {
+                            _q = '';
+                            _searchCtrl.clear();
+                          }),
+                  child: Icon(_q.isEmpty ? Icons.tune_rounded : Icons.close_rounded,
+                      color: const Color(0xFF9AA1C7), size: 28),
+                ),
               ],
             ),
           ),

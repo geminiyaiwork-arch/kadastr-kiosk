@@ -11,6 +11,7 @@ import '../core/theme/icons.dart';
 import '../core/theme/press.dart';
 import '../core/theme/text_styles.dart';
 import '../core/theme/tokens.dart';
+import '../features/ai/voice_controller.dart';
 import 'lang_modal.dart';
 import 'operator_menu.dart';
 
@@ -274,7 +275,10 @@ class _BottomNav extends ConsumerWidget {
           return Expanded(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: () => context.go(it.$1),
+              onTap: () {
+                ref.read(voiceProvider.notifier).announcePage(it.$1); // manual bosishда ovoz
+                context.go(it.$1);
+              },
               child: Opacity(
                 opacity: active ? 1 : 0.62,
                 child: Column(

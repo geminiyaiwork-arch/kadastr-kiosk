@@ -57,9 +57,10 @@ class VoiceUiState {
 /// Wake-word variants for "KAI" (= Kadastr AI), incl. Whisper mis-hearings.
 const _wakeSet = {
   'kai', 'kayi', 'kay', 'kei', 'key', 'kaye', 'kayy', 'kayu', 'kae', 'kya', 'kyi', 'keyi',
-  'qai', 'qei', 'qey', // 'qayi' OLIB TASHLANDI — o'zbekcha "qay(si)" so'zi bilan chalkashardi (jonli: "qayi, non")
-  'кай', 'кей', 'кэй', 'кайи', 'каи',
-  'kadastr', 'cadastre',
+  'kaii', 'kaiy', 'kaey', 'kaya', 'khai', 'khay', 'kaj', // qo'shimcha Whisper variantlari
+  'qai', 'qei', 'qey', 'qaii', // 'qayi' OLIB TASHLANDI — o'zbekcha "qay(si)" so'zi bilan chalkashardi (jonli: "qayi, non")
+  'кай', 'кей', 'кэй', 'кайи', 'каи', 'кая', 'каий', 'кайй',
+  'kadastr', 'cadastre', 'kadaster', 'kadastir', // imlo variantlari (startsWith ham ushlaydi)
 };
 
 // Fuzzy-moslik O'CHIRILDI: 'qo'y/qay/gey' kabi oddiy so'zlar ism deb olinardi.
@@ -140,6 +141,70 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (_busy) return;
     _busy = true;
     await _speak(text, video: true); // salomlashuv — muloqat → video generatsiya
+  }
+
+  /// Foydalanuvchi QO'LDA (tugma bilan) sahifa ochganда — o'sha sahifани OVOZда
+  /// tanishtiradi. (Ovozli navigatsiya JIM o'tadi; bu FAQAT manual bosishда
+  /// chaqiriladi.) Content sahifада avatar yo'q → oddiy TTS (video emas).
+  Future<void> announcePage(String route) async {
+    if (_busy) return; // allaqachon gapiryapti — bezovta qilmaymiz
+    final intro = _pageIntro(route);
+    if (intro == null || intro.isEmpty) return;
+    _busy = true;
+    await _speak(intro, video: false);
+  }
+
+  String? _pageIntro(String route) {
+    final r = route.split('?').first;
+    if (r.startsWith('/district/')) {
+      final nm = Uri.decodeComponent(r.substring('/district/'.length));
+      return _lang == 'ru'
+          ? '$nm — информация по району.'
+          : _lang == 'en'
+              ? '$nm district information.'
+              : '$nm bo‘yicha ma’lumot.';
+    }
+    const uz = {
+      '/services': 'Kadastr xizmatlari bo‘limi. Kerakli xizmatni tanlang yoki menga ayting.',
+      '/districts': 'Tumanlar bo‘limi. Har bir tuman bo‘yicha ma’lumotni ko‘rishingiz mumkin.',
+      '/phones': 'Aloqa raqamlari bo‘limi. Kerakli telefon raqamini shu yerdan toping.',
+      '/docs': 'Hujjatlar bo‘limi. Kerakli hujjat va ma’lumotlar shu yerda.',
+      '/xatlov': 'Xatlov bo‘limi — to‘qqiz yuz o‘ttiz yetti ishchi guruh ma’lumotlari.',
+      '/property': 'Ko‘chmas mulk bo‘limi.',
+      '/illegal': 'Noqonuniy egallangan yerlar bo‘limi.',
+      '/appeal': 'Murojaat bo‘limi. Fikr yoki shikoyatingizni yozing yoki menga ayting.',
+      '/reception': 'Rahbariyat qabuli bo‘limi.',
+      '/news': 'Yangiliklar bo‘limi.',
+      '/social': 'Ijtimoiy tarmoqlar bo‘limi.',
+    };
+    const ru = {
+      '/services': 'Раздел кадастровых услуг. Выберите нужную услугу или скажите мне.',
+      '/districts': 'Раздел районов. Можно посмотреть данные по каждому району.',
+      '/phones': 'Раздел телефонов. Найдите нужный номер здесь.',
+      '/docs': 'Раздел документов. Нужные документы и сведения здесь.',
+      '/xatlov': 'Раздел хатлова — данные рабочей группы девятьсот тридцать семь.',
+      '/property': 'Раздел недвижимости.',
+      '/illegal': 'Раздел незаконно занятых земель.',
+      '/appeal': 'Раздел обращений. Напишите или скажите ваше обращение.',
+      '/reception': 'Раздел приёма руководством.',
+      '/news': 'Раздел новостей.',
+      '/social': 'Раздел социальных сетей.',
+    };
+    const en = {
+      '/services': 'Cadastre services section. Choose a service or tell me.',
+      '/districts': 'Districts section. You can view data for each district.',
+      '/phones': 'Phone numbers section. Find the number you need here.',
+      '/docs': 'Documents section. Needed documents and information are here.',
+      '/xatlov': 'Survey section — working group nine thirty seven data.',
+      '/property': 'Real estate section.',
+      '/illegal': 'Illegally occupied lands section.',
+      '/appeal': 'Appeals section. Write or tell me your appeal.',
+      '/reception': 'Management reception section.',
+      '/news': 'News section.',
+      '/social': 'Social networks section.',
+    };
+    final m = _lang == 'ru' ? ru : _lang == 'en' ? en : uz;
+    return m[r];
   }
 
   Future<void> _loop() async {
@@ -326,10 +391,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (content.trim().length >= 2) {
       await askAI(content);
     } else {
-      // "Kadastr AI" (yolg'iz ism) — "Eshitaman..." deymiz va KEYINGI gap
-      // 15 soniya ichida ISMSIZ qabul qilinadi (bir martalik)
+      // "Kadastr AI" (yolg'iz ism) — "Hoy, labbay! Eshitaman..." deb javob beramiz va
+      // KEYINGI gap 15 soniya ichida ISMSIZ qabul qilinadi (bir martalik)
       _followUntil = DateTime.now().add(const Duration(seconds: 15));
-      await _speak(_prompt(), video: true);
+      await _speak(_labbay(), video: true);
     }
   }
 
@@ -503,6 +568,13 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         'uz': 'Eshitaman, savolingizni ayting.',
         'ru': 'Слушаю, задайте вопрос.',
         'en': 'I am listening, ask your question.',
+      }[_lang]!;
+
+  /// Ism bilan chaqirilganda (savolsiz) — "Labbay, eshitaman!" deb javob beradi.
+  String _labbay() => {
+        'uz': 'Hoy, labbay! Eshitaman, savolingizni ayting.',
+        'ru': 'Да, слушаю вас! Задавайте ваш вопрос.',
+        'en': 'Yes, I am listening! Please ask your question.',
       }[_lang]!;
 
   String _repeatPrompt() => {
