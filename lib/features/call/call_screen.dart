@@ -31,6 +31,9 @@ class _CallScreenState extends ConsumerState<CallScreen> {
   bool _connected = false;
   bool _ended = false;
   final List<Map<String, dynamic>> _pendCands = []; // call_id kelmaguncha buferlangan ICE nomzodlar
+  Timer? _durTimer;
+  int _dur = 0; // suhbat davomiyligi (soniya)
+  String get _durText { final m = _dur ~/ 60, s = _dur % 60; return '$m:${s.toString().padLeft(2, '0')}'; }
 
   void _postCand(Map<String, dynamic> cand) {
     ref.read(dioProvider).post('/call/ice', data: {'call_id': _callId, 'side': 'k', 'candidate': cand}).catchError((_) => null);
@@ -66,6 +69,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
         if (e.streams.isNotEmpty) {
           _remote.srcObject = e.streams[0];
           if (mounted) setState(() { _connected = true; _status = widget.name; });
+          _durTimer ??= Timer.periodic(const Duration(seconds: 1), (_) { if (mounted) setState(() => _dur++); }); // vaqt hisoblagich
         }
       };
       _pc!.onIceCandidate = (c) {
@@ -85,7 +89,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
       _callId = data['call_id']?.toString();
       for (final c in _pendCands) { _postCand(c); } // buferdagi nomzodlarni yuborish (host-nomzod yo'qolmaydi)
       _pendCands.clear();
-      if (mounted) setState(() => _status = 'javob kutilmoqda…');
+      if (mounted) setState(() => _status = 'Chaqirilyapti…');
       _poll = Timer.periodic(const Duration(milliseconds: 900), (_) => _tick());
     } catch (e) {
       _fail('Qo‘ng‘iroq boshlanmadi');
@@ -128,6 +132,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
     if (_ended) return;
     _ended = true;
     _poll?.cancel();
+    _durTimer?.cancel();
     try { for (final t in _stream?.getTracks() ?? const []) { await t.stop(); } } catch (_) {}
     try { await _pc?.close(); } catch (_) {}
     try { await _local.dispose(); } catch (_) {}
@@ -165,13 +170,17 @@ class _CallScreenState extends ConsumerState<CallScreen> {
             right: 20, top: 40, width: 140, height: 200,
             child: ClipRRect(borderRadius: BorderRadius.circular(14), child: RTCVideoView(_local, mirror: true, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)),
           ),
-        // Yuqori holat
+        // Yuqori holat — ism + vaqt hisoblagich (Telegram uslubi)
         if (_connected)
-          Positioned(top: 44, left: 24, child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(color: Colors.black38, borderRadius: BorderRadius.circular(20)),
-            child: Text(widget.name, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-          )),
+          Positioned(top: 44, left: 0, right: 0, child: Center(child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(22)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(widget.name, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+              const SizedBox(width: 10),
+              Text('🔴 $_durText', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+            ]),
+          ))),
         // Tugatish
         Positioned(
           left: 0, right: 0, bottom: 50,
