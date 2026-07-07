@@ -46,14 +46,14 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final loading = w['loading'] == true;
     ref.read(aiWarmupLoadingProvider.notifier).state = loading;
     setState(() => _warmup = w);
+    // AI HAR DOIM normal ishlaydi + salomlashadi. Warmup faqat ustidан bilinar-bilinmas
+    // 0101 qatlam (bloklamaydi, ovozда e'lon qilmaydi — "hech nimaga ta'sir qilmasin").
+    final t = I18N[ref.read(localeProvider)]!;
+    final vc = ref.read(voiceProvider.notifier);
+    vc.resetConversation(); // eski javob/jadval tozalanadi — avatar to'liq ekranda salomlashadi
+    vc.greet(t['aiGreet']);
     if (loading) {
-      _speakWarmup(w);
       _warmupPoll = Timer.periodic(const Duration(seconds: 30), (_) => _refreshWarmup());
-    } else {
-      final t = I18N[ref.read(localeProvider)]!;
-      final vc = ref.read(voiceProvider.notifier);
-      vc.resetConversation(); // eski javob/jadval tozalanadi — avatar to'liq ekranda salomlashadi
-      vc.greet(t['aiGreet']);
     }
   }
 
@@ -67,11 +67,8 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     if (!loading) { _warmupPoll?.cancel(); } // 7 soat tugadi → AI normal ishga tushadi
   }
 
-  void _speakWarmup(Map<String, dynamic> w) {
-    final rem = (w['remaining'] as num?)?.round() ?? 100;
-    // "Har kirganda buncha foiz qoldi deb gapirsin" — boshqa gap qo'shilmaydi.
-    ref.read(voiceProvider.notifier).greet('Hozirda sun\'iy intellekt yuklanmoqda. $rem foiz qoldi.');
-  }
+  // Warmup to'lish foizi (0→100, 5 soatда). Server `progress` qaytaradi.
+  double get _warmupProgress => ((_warmup?['progress'] as num?)?.toDouble() ?? 0).clamp(0, 100).toDouble();
 
   @override
   void dispose() {
@@ -80,44 +77,6 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     super.dispose();
   }
 
-  // ── AI "YUKLANMOQDA" ekrani — orqada avatar, markazда foizli progress ──
-  Widget _buildWarmup(Map<String, dynamic> w) {
-    final avatar = ref.watch(avatarProvider).valueOrNull;
-    final url = (avatar?.enabled ?? false) ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}' : null;
-    final loaded = ((w['progress'] as num?)?.toDouble() ?? 0).clamp(0, 100).toDouble();
-    final remaining = (w['remaining'] as num?)?.round() ?? (100 - loaded).round();
-    return Container(
-      color: T.aiDark,
-      child: Stack(fit: StackFit.expand, children: [
-        // Avatar ORQADA (to'liq ekran, xiralashtirilgan)
-        if (url != null)
-          Opacity(opacity: 0.45, child: Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox.shrink())),
-        DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(
-          begin: Alignment.topCenter, end: Alignment.bottomCenter,
-          colors: [Colors.black.withOpacity(0.30), Colors.black.withOpacity(0.78)]))),
-        // Markaz: halqa (yuklangan foiz to'ladi) + markazда QOLGAN foiz
-        Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          SizedBox(width: 340, height: 340, child: Stack(alignment: Alignment.center, children: [
-            SizedBox(width: 340, height: 340, child: CircularProgressIndicator(
-              value: loaded / 100.0, strokeWidth: 18,
-              backgroundColor: Colors.white.withOpacity(0.15),
-              valueColor: const AlwaysStoppedAnimation(T.green))),
-            Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('$remaining%', style: const TextStyle(color: Colors.white, fontSize: 104, fontWeight: FontWeight.w900, height: 1.0)),
-              const Text('qoldi', style: TextStyle(color: Colors.white70, fontSize: 30, fontWeight: FontWeight.w600)),
-            ]),
-          ])),
-          const SizedBox(height: 48),
-          const Text('Sun\'iy intellekt yuklanmoqda', style: TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 18),
-          SizedBox(width: 520, child: LinearProgressIndicator(
-            value: loaded / 100.0, minHeight: 12,
-            backgroundColor: Colors.white.withOpacity(0.15),
-            valueColor: const AlwaysStoppedAnimation(T.green))),
-        ])),
-      ]),
-    );
-  }
 
   String _status(VoiceUiState v, Map<String, dynamic> t) {
     final lang = ref.read(localeProvider);
@@ -148,7 +107,8 @@ class _AiScreenState extends ConsumerState<AiScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isWarmup) return _buildWarmup(_warmup!);
+    // WARMUP endi BLOKLAMAYDI — AI to'liq ishlaydi, warmup faqat ustidan bilinar-bilinmas
+    // 0101 qatlam (pastda Stack ichiga qo'shiladi).
     final t = ref.watch(trProvider);
     final v = ref.watch(voiceProvider);
     final avatar = ref.watch(avatarProvider).valueOrNull;
@@ -344,11 +304,142 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                 ),
               ),
             ),
+            // WARMUP qatlami — bilinar-bilinmas 0101 binary yomg'iri + 5 soatда to'ladigan
+            // ingichka chiziq. IgnorePointer → AI ostidan NORMAL ishlaydi, hech nimaga ta'sir yo'q.
+            if (_isWarmup)
+              Positioned.fill(
+                child: IgnorePointer(child: _WarmupOverlay(progress: _warmupProgress, dark: !hasData)),
+              ),
           ],
         );
       }),
     );
   }
+}
+
+/// AIга kirganда ustidан BILINAR-BILINMAS ko'rinadigan qatlam: Matrix uslubidagi
+/// "0101" binary yomg'iri + pastda 5 soatда to'ladigan juda xira chiziq + kichkina foiz.
+/// IgnorePointer bilan o'raladi (AI ostidan normal ishlaydi).
+class _WarmupOverlay extends StatefulWidget {
+  const _WarmupOverlay({required this.progress, required this.dark});
+  final double progress; // 0..100
+  final bool dark; // to'q fon (avatar to'liq ekran) — yashilroq; och fon (karta) — xiraroq
+  @override
+  State<_WarmupOverlay> createState() => _WarmupOverlayState();
+}
+
+class _WarmupOverlayState extends State<_WarmupOverlay> with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 6))..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Bilinar-bilinmas: to'q fonда 0.10, och fonда 0.06 shaffoflik.
+    final op = widget.dark ? 0.11 : 0.06;
+    return Stack(children: [
+      Positioned.fill(
+        child: Opacity(
+          opacity: op,
+          child: RepaintBoundary(
+            child: AnimatedBuilder(
+              animation: _c,
+              builder: (_, __) => CustomPaint(painter: _BinaryRainPainter(_c.value), size: Size.infinite),
+            ),
+          ),
+        ),
+      ),
+      // 5 soatда to'ladigan JUDA XIRA chiziq (eng pastда) + kichkina foiz
+      Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Opacity(
+              opacity: widget.dark ? 0.22 : 0.14,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 14, bottom: 4),
+                  child: Text('${widget.progress.round()}%',
+                      style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: widget.dark ? Colors.greenAccent : const Color(0xFF2E7D5B))),
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 3,
+              child: LinearProgressIndicator(
+                value: (widget.progress / 100.0).clamp(0.0, 1.0),
+                backgroundColor: Colors.transparent,
+                valueColor: AlwaysStoppedAnimation(
+                    (widget.dark ? Colors.greenAccent : const Color(0xFF2E7D5B)).withOpacity(0.25)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ]);
+  }
+}
+
+/// Matrix "0101" yomg'iri — ustundan pastga tushuvchi binary raqamlar (barqaror naqsh,
+/// faqat siljiydi — miltillamaydi). PERF: '0' va '1' BIR MARTA layout qilinib qayta
+/// chiziladi (har freymда layout QILINMAYDI) — kiosk GPU'siga yengil.
+class _BinaryRainPainter extends CustomPainter {
+  _BinaryRainPainter(this.t);
+  final double t; // 0..1 (siljish fazasi)
+  static const int _cols = 26;
+  static const double _cell = 36;
+
+  static final TextPainter _p0 = _mk('0');
+  static final TextPainter _p1 = _mk('1');
+  static TextPainter _mk(String ch) => TextPainter(
+        text: TextSpan(
+          text: ch,
+          style: const TextStyle(color: Color(0xFF39FF9A), fontSize: 22, fontFamily: 'monospace', fontWeight: FontWeight.w600),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+  // (c, row) uchun BARQAROR raqam (0/1) — determinlashgan psevdo-tasodif (miltillamaydi).
+  int _bit(int c, int row) => (((c * 73856093) ^ (row * 19349663)) >> 5) & 1;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    final colW = size.width / _cols;
+    final rowsPerCol = (size.height / _cell).ceil() + 2;
+    for (var c = 0; c < _cols; c++) {
+      final speed = 0.6 + ((c * 37) % 7) * 0.12; // ustunlar turli tezlikda (barqaror)
+      final offset = (t * speed % 1.0) * size.height;
+      final x = c * colW + colW / 2;
+      for (var d = 0; d < rowsPerCol; d++) {
+        final baseY = d * _cell + offset;
+        final y = baseY % (size.height + _cell) - _cell;
+        final row = (baseY ~/ _cell) + c; // siljiганda raqam o'zgaradi
+        final tp = _bit(c, row) == 0 ? _p0 : _p1;
+        tp.paint(canvas, Offset(x - tp.width / 2, y));
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BinaryRainPainter old) => old.t != t;
 }
 
 /// MOCKUP (1:1) uslubidagi javob: OLOV-belgili + raqamlari INDIGO-BOLD matn-karta,
