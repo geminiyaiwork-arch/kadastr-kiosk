@@ -389,6 +389,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       await _player.stop();
     } catch (_) {}
     try {
+      await ref.read(avatarPlayerProvider.notifier).stop(); // o'ynayotgan avatar-videoni darhol to'xtat
+    } catch (_) {}
+    try {
       if (!await _rec.hasPermission()) {
         state = state.copyWith(error: 'mic', recording: false);
         _busy = false;
@@ -470,6 +473,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     try {
       await _player.stop();
     } catch (_) {}
+    try {
+      await ref.read(avatarPlayerProvider.notifier).stop(); // o'ynayotgan avatar-videoni darhol to'xtat
+    } catch (_) {}
     state = state.copyWith(heard: q, clearError: true);
     _logHeard(q);
     final route = _matchRoute(q);
@@ -540,6 +546,11 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         // video bo'lmadi — pastdagi oddiy TTS'ga tushamiz
       } catch (_) {}
     }
+    // TTS yo'liga tushdik (ma'lumotli javob YOKI video muvaffaqiyatsiz) — o'ynayotgan
+    // avatar-video qolgan bo'lsa to'xtatamiz (ovoz ustma-ust tushmasin, burchakда eski video qolmasin).
+    try {
+      await ref.read(avatarPlayerProvider.notifier).stop();
+    } catch (_) {}
     final url = '${Env.apiBase}/tts/synthesize?text=${Uri.encodeComponent(clean.substring(0, min(clean.length, 800)))}'
         '&voice=$voice&lang=$_lang';
     // ignore: avoid_print
