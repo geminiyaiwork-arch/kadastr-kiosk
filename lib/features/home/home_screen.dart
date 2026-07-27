@@ -22,10 +22,13 @@ class HomeScreen extends ConsumerWidget {
     final svc = t['svc'] as List;
     final stats = t['stats'] as List;
     // Live stats (/stats) with offline fallback; '—' while loading.
-    final values = ref.watch(statsProvider).maybeWhen(
+    final statsAsync = ref.watch(statsProvider);
+    final values = statsAsync.maybeWhen(
           data: (s) => s.homeRow.map(fmt).toList(),
           orElse: () => const ['—', '—', '—', '—'],
         );
+    // Admin statistikani o'chirsa (enabled:false) — panelni ko'rsatmaymiz.
+    final showStats = statsAsync.maybeWhen(data: (s) => s.enabled, orElse: () => true);
 
     return KioskScaffold(
       body: Column(
@@ -57,7 +60,8 @@ class HomeScreen extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 38),
-          _StatsPanel(title: t['statsTitle'], labels: stats.cast<String>(), values: values),
+          if (showStats)
+            _StatsPanel(title: t['statsTitle'], labels: stats.cast<String>(), values: values),
           // VERSIYA yorlig'i — kichkina, xira (qaysi versiya turganini bilish uchun)
           const SizedBox(height: 10),
           const Align(

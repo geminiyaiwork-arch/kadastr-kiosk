@@ -18,12 +18,18 @@ const _kUpdateUrl = 'https://andkadastrai.uz/kiosk-latest.json';
 /// dastur o'zini qayta ochadi. Band bo'lsa — o'rnatmaydi, keyingi tekshiruvда qayta urinadi.
 class UpdateService {
   static bool _busy = false;
+  // Loop-guard: bir versiyani sessiyada 3 martadan ortiq o'rnatishga urinmaymiz.
+  // (Versiya desinxron bo'lsa yoki o'rnatish muvaffaqiyatsiz bo'lsa — har 15 daqiqada
+  //  cheksiz qayta-o'rnatish loopiga tushmaslik uchun.)
+  static String _attemptedVer = '';
+  static int _attemptCount = 0;
 
   /// [canInstall] — hozir o'rnatsa bo'ladimi (faol foydalanuvchini uzmaslik uchun).
   /// null yoki true qaytarsa darhol o'rnatadi; false qaytarsa — bu safar o'tkazadi.
   static Future<void> check({bool Function()? canInstall}) async {
     if ((!Platform.isWindows && !Platform.isLinux) || _busy) return;
     String latest = '', exe = '', deb = '';
+    bool enabled = true;
     try {
       final dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 8), receiveTimeout: const Duration(seconds: 8)));
       final r = await dio.get(_kUpdateUrl);
@@ -31,14 +37,19 @@ class UpdateService {
       latest = (m['version'] ?? '').toString().trim();
       exe = (m['exe'] ?? '').toString().trim();
       deb = (m['deb'] ?? '').toString().trim();
+      enabled = m['enabled'] != false; // admin avto-yangilanishni o'chirsa (false) — to'xtaymiz
     } catch (_) {
       return;
     }
+    if (!enabled) return; // admin panelдан o'chirilgan
     final pkgUrl = Platform.isWindows ? exe : deb;
     if (latest.isEmpty || pkgUrl.isEmpty || !_newer(latest, Env.appVersion)) return;
+    // Loop-guard: shu versiyani 3 marta urinib bo'lgan bo'lsak — boshqa urinmaymiz.
+    if (latest == _attemptedVer && _attemptCount >= 3) return;
     // Faol foydalanuvchini uzmaslik: band bo'lsa (murojaat/video) hozir o'rnatmaymiz —
     // keyingi (15 daqiqalik) tekshiruv yoki zastavkaga o'tganda o'rnatadi.
     if (canInstall != null && !canInstall()) return;
+    if (latest == _attemptedVer) { _attemptCount++; } else { _attemptedVer = latest; _attemptCount = 1; }
     await _install(pkgUrl, latest);
   }
 
@@ -77,6 +88,9 @@ class UpdateService {
       if (Platform.isWindows) {
         final tmp = '${Directory.systemTemp.path}\\kadastr-kiosk-setup-$v.exe';
         await Dio().download(pkgUrl, tmp, options: Options(receiveTimeout: const Duration(minutes: 15)));
+        // Yuklab olingan fayl BUTUNLIGI: yarim/buzuq yuklansa o'rnatgichni ISHGA TUSHIRMAYMIZ
+        // (aks holda exit(0) qilib kioskни o'lik qoldirardi). Setup ~20MB → <3MB = buzuq.
+        if (await File(tmp).length() < 3 * 1024 * 1024) throw Exception('setup fayli buzuq/yarim yuklandi');
         // MUHIM: UAC (ruxsat) oynasi TO'LIQ-EKRAN kiosk ORQASIDA qolib, yangilanish
         // hech qachon boshlanmasdi! O'rnatishdan oldin kiosk kichrayadi — UAC ko'rinadi.
         try {
@@ -94,6 +108,7 @@ class UpdateService {
         // so'ng yangi versiyani ishga tushirib, o'zimizni yopamiz.
         final tmp = '${Directory.systemTemp.path}/kadastr-kiosk-$v.deb';
         await Dio().download(pkgUrl, tmp, options: Options(receiveTimeout: const Duration(minutes: 15)));
+        if (await File(tmp).length() < 3 * 1024 * 1024) throw Exception('deb fayli buzuq/yarim yuklandi');
         try {
           await windowManager.setAlwaysOnTop(false);
           await windowManager.setFullScreen(false);

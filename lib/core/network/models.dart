@@ -6,6 +6,7 @@ String _s(dynamic v) => v == null ? '' : '$v';
 class Stats {
   final int tumanlar, arizalar, auksionYerlar, kochmasMulklar, yerUchastkalari, xatlovObyektlari;
   final double maydonGa;
+  final bool enabled; // admin statistikani o'chirsa (false) — kioskda panel yashiriladi
   const Stats({
     required this.tumanlar,
     required this.arizalar,
@@ -14,6 +15,7 @@ class Stats {
     required this.yerUchastkalari,
     required this.xatlovObyektlari,
     required this.maydonGa,
+    this.enabled = true,
   });
 
   factory Stats.fromJson(Map<String, dynamic> j) => Stats(
@@ -24,6 +26,7 @@ class Stats {
         yerUchastkalari: _n(j['yer_uchastkalari']).toInt(),
         xatlovObyektlari: _n(j['xatlov_obyektlari']).toInt(),
         maydonGa: _n(j['maydon_ga']).toDouble(),
+        enabled: j['enabled'] != false,
       );
 
   /// Home stats panel values (web fallback logic): districts, real-estate,

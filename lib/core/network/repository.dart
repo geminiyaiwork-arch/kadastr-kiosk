@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart' show rootBundle;
@@ -8,7 +9,11 @@ import 'api_client.dart';
 import 'models.dart';
 
 /// Real estate / land statistics — live /stats, offline fallback to bundled data.json.
+/// 24/7 kioskda RAQAMLAR ESKIRMASIN: 30 daqiqada bir o'zini yangilaydi (admin qiymatni
+/// o'zgartirsa yoki manba yangilansa — kiosk qayta yuklamasdan yangilanadi).
 final statsProvider = FutureProvider<Stats>((ref) async {
+  final t = Timer(const Duration(minutes: 30), ref.invalidateSelf);
+  ref.onDispose(t.cancel);
   final dio = ref.read(dioProvider);
   try {
     final r = await dio.get('/stats');
