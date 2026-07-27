@@ -81,6 +81,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   // KAI gapirganidan keyingi "suhbat oynasi" — shu vaqtgacha AI sahifasida
   // ismsiz davom-savoli qabul qilinadi
   DateTime _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  // AI gapirgandan keyin ECHO-SUKUT: mikrofon o'z ovozini (TTS tail/reverb) qayta eshitib
+  // soxta "kadastr" wake bermasin (aks holda bo'sh turганда o'zidan AI'ga kirib ketardi,
+  // zastavka chiqmasdi). Shu vaqtgacha ambient tinglash O'CHIQ.
+  DateTime _quietUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
   bool Function()? onAiPage; // direct mode (no wake needed)
   bool Function()? canListen; // false on the appeal page (camera owns the mic)
@@ -250,6 +254,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   static const int _maxUttMs = 11000;         // eng uzun gap (uzun savol ham sig'sin)
   static const double _rmsMinDbfs = -48.0;    // muvozanat: user ovozi yutilmasin, uzoq shovqin ham kirmasin
   Future<String?> _capture() async {
+    // ECHO-SUKUT: AI endigina gapirgan bo'lsa, o'z ovozini (tail/reverb) eshitmaslik uchun
+    // qisqa muddat tinglamaymiz (soxta wake -> o'zidan AI'ga kirish oldini oladi).
+    if (DateTime.now().isBefore(_quietUntil)) { await _sleep(250); return null; }
     final path = '${Directory.systemTemp.path}/kadastr_utt.wav';
     try {
       await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: path);
@@ -643,6 +650,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
         if (ok) {
           state = state.copyWith(speaking: false);
+          _quietUntil = DateTime.now().add(const Duration(milliseconds: 2500)); // echo-sukut
           _busy = false;
           return;
         }
@@ -678,6 +686,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       print('[tts] play xato: $e');
     }
     state = state.copyWith(speaking: false);
+    _quietUntil = DateTime.now().add(const Duration(milliseconds: 2500)); // echo-sukut (o'z ovozini eshitmasin)
     _busy = false;
   }
 
