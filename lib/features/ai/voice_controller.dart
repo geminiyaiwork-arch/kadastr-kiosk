@@ -233,7 +233,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         // AI sahifasida TUSHUNARSIZ gap — qaytadan so'raymiz (20s cooldown:
         // fon shovqinida har 3.6s "tushunmadim" spam bo'lmasin)
         _lastRepeat = DateTime.now();
-        await _speak(_repeatPrompt(), video: true);
+        await _speak(_repeatPrompt(), video: false);
       } else {
         _busy = false;
       }
@@ -330,7 +330,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       final r = await _dio.post(
         '/stt',
         queryParameters: {'lang': _lang},
-        data: Stream.fromIterable(bytes.map((b) => [b])),
+        data: Stream.fromIterable([bytes]), // BUTUN bayt bir bo'lakda (avval bayt-bayt = 350k+ mikro-hodisa, sekin)
         options: Options(contentType: 'application/octet-stream', headers: {Headers.contentLengthHeader: bytes.length}),
       );
       final m = Map<String, dynamic>.from(r.data as Map);
@@ -425,7 +425,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       // "Kadastr AI" (yolg'iz ism) — "Hoy, labbay! Eshitaman..." deb javob beramiz va
       // KEYINGI gap 15 soniya ichida ISMSIZ qabul qilinadi (bir martalik)
       _followUntil = DateTime.now().add(const Duration(seconds: 15));
-      await _speak(_labbay(), video: true);
+      await _speak(_labbay(), video: false);
     }
   }
 
@@ -531,7 +531,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       }
     } else {
       // Tushunarsiz — avatar to'liq ekranda qoladi (karta chiqarilmaydi), faqat ovozda so'raydi
-      await _speak(_repeatPrompt(), video: true);
+      await _speak(_repeatPrompt(), video: false);
     }
   }
 
@@ -585,7 +585,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (q.length >= 2) {
       await askAI(q);
     } else {
-      await _speak(_prompt(), video: true);
+      await _speak(_prompt(), video: false);
     }
   }
 

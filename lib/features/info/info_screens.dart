@@ -96,8 +96,18 @@ class _DocVideoCardState extends ConsumerState<_DocVideoCard> {
   @override
   void dispose() {
     _setBusy(false);
+    try { _vc?.pause(); } catch (_) {}   // dispose ba'zan ovozni darhol to'xtatmaydi → avval pause
     try { _vc?.dispose(); } catch (_) {}
     super.dispose();
+  }
+
+  // Sahifadan chiqilsa (route /docs emas) videoni DARHOL to'xtatadi — fonда ovoz qolmasin.
+  void _stopIfLeft(String route) {
+    if (route == '/docs' || _vc == null) return;
+    try { _vc?.pause(); } catch (_) {}
+    try { _vc?.dispose(); } catch (_) {}
+    _vc = null; _started = false; _setBusy(false);
+    if (mounted) setState(() {});
   }
 
   Future<void> _play(String path) async {
@@ -132,6 +142,8 @@ class _DocVideoCardState extends ConsumerState<_DocVideoCard> {
   @override
   Widget build(BuildContext context) {
     final t = ref.watch(trProvider);
+    // Boshqa sahifaga o'tilsa videoni to'xtat (idle-reset ham /ga o'tkazadi).
+    ref.listen(currentRouteProvider, (prev, next) => _stopIfLeft(next));
     final path = ref.watch(docsVideoProvider).asData?.value;
     final c = _vc;
 
