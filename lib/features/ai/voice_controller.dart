@@ -406,7 +406,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     //    gapiradi — boshqa sahifalarda ovozli izoh YO'Q).
     //    AI sahifasida faqat aniq "och/sahifasini och" buyrug'ida o'tadi.
     final route = _matchRoute(content);
-    if (route != null && navTo != null && (!onAi || _openCmd(content))) {
+    // NAVIGATSIYA endi HAR sahifada ANIQ "och/kir/bo'limi" buyrug'ini talab qiladi.
+    // (Avval bosh ekranда och-buyrug'isiz sakrardi → mikrofon "kadastr raqami"/echo
+    //  eshitib O'ZIDAN O'ZI Telefonlarга o'tib ketardi. Endi faqat "telefonlarni och" da.)
+    if (route != null && navTo != null && _openCmd(content)) {
       navTo!(route);
       _busy = false;
       return;
@@ -451,7 +454,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       return '/illegal';
     }
     if (has(['hujjat', 'document', 'документ', 'spravka'])) return '/docs';
-    if (has(['telefon', 'phone', 'телефон', 'raqam', 'aloqa'])) return '/phones';
+    if (has(['telefon', 'phone', 'телефон', 'aloqa'])) return '/phones'; // 'raqam' OLINDI — "kadastr raqami" telefon EMAS
     if (has(['murojaat', 'appeal', 'обращ', 'жалоб', 'shikoyat', 'ariza topshir', 'murojat'])) return '/appeal';
     if (has(['qabul', 'rahbar', 'reception', 'прием', 'приём'])) return '/reception';
     if (has(['yangilik', 'news', 'novost', 'новост'])) return '/news';
