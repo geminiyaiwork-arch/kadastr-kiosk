@@ -122,6 +122,16 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     _loop();
   }
 
+  /// Gapirishни (TTS + avatar video) DARHOL to'xtatadi — sahifa almashса yoki zastavka
+  /// chiqганда fonда ovoz qolmasin. Ambient tinglash o'chmaydi (faqat joriy ovoz to'xtaydi).
+  Future<void> stopSpeaking() async {
+    try { await _player.stop(); } catch (_) {}
+    try { await ref.read(avatarPlayerProvider.notifier).stop(); } catch (_) {}
+    _busy = false;
+    _quietUntil = DateTime.now().add(const Duration(milliseconds: 800));
+    if (state.speaking) state = state.copyWith(speaking: false);
+  }
+
   Future<void> stop() async {
     _on = false;
     _busy = false;

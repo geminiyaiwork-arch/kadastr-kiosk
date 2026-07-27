@@ -237,10 +237,10 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                 ),
               ),
             ),
-            // exit pill
+            // exit pill — PASTKI-CHAPDA (avval top-left'da javob matni ustiga chiqib qolardi)
             Positioned(
-              top: 28,
-              left: 28,
+              bottom: 44,
+              left: 36,
               child: GestureDetector(
                 onTap: () => context.go('/'),
                 child: Container(

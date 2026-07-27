@@ -12,6 +12,7 @@ import '../core/services/screensaver_cache.dart';
 import '../core/theme/text_styles.dart';
 import '../core/theme/tokens.dart';
 import '../router.dart';
+import '../features/ai/voice_controller.dart';
 
 /// Idle handling: at 90s reset to home + uz; at 120s show the attract screen.
 ///
@@ -35,11 +36,17 @@ class _IdleAttractHostState extends ConsumerState<IdleAttractHost> {
     super.initState();
     _t = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     ref.listenManual(voiceActivityProvider, (_, __) => _idle = 0);
+    // Bosh menyuga ('/') qaytilса — gapirayotган ovoz (sahifa-e'loni yoki AI javob) TO'XTASIN.
+    ref.listenManual(currentRouteProvider, (_, next) {
+      if (next == '/') { try { ref.read(voiceProvider.notifier).stopSpeaking(); } catch (_) {} }
+    });
     Future.microtask(() => ref.read(screensaverCacheProvider.future));
   }
 
   void _setAttract(bool on) {
     setState(() => _attract = on);
+    // ZASTAVKA chiqganда fonда AI ovozi gapirmasin — darhol to'xtatamiz.
+    if (on) { try { ref.read(voiceProvider.notifier).stopSpeaking(); } catch (_) {} }
     Future.microtask(() {
       if (mounted) ref.read(attractProvider.notifier).state = on;
     });

@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../core/theme/text_styles.dart';
 import '../core/theme/tokens.dart';
+import '../core/env.dart';
 import '../features/common/widgets.dart';
 
 /// Hidden 10-tap zone (top-right corner) → operator menu. Counts taps within 3s.
@@ -75,6 +76,8 @@ void showOperatorMenu(BuildContext context) {
             KButton('Bekor', variant: 'outline', onTap: () => Navigator.of(context).pop()),
             const SizedBox(height: 8),
             const Text('Faqat operator uchun', style: TextStyle(fontSize: 17, color: T.muted)),
+            const SizedBox(height: 6),
+            const Text('Versiya:  v${Env.appVersion}', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: T.navy)),
           ],
         ),
       ),
