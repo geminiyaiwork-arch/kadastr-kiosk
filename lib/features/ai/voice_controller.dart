@@ -240,11 +240,15 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
   }
 
-  // Ambient wake-word tinglash: getAmplitude'ga TAYANMAYDI (Linux'da -160 qaytaradi).
-  // Qisqa oyna (≈3.6s) yozib, FAYL energiyasi (RMS) bo'yicha sukut/ovozни ajratadi —
-  // sukut bo'lsa STTга yubormaydi, ovoz bo'lsa STT → wake-word ("Kai") tekshiradi.
-  static const int _winMs = 3600;
-  static const double _rmsMinDbfs = -48.0; // muvozanat: user ovozi yutilmasin, uzoq shovqin ham kirmasin
+  // Ambient tinglash — DINAMIK OYNA (gap tugashini kutadi, avval qat'iy 3.6s edi →
+  // "Marhamat tumani statistikasi" kabi uzun savollarni KESIB/BO'LIB yuborardi).
+  // Windows: getAmplitude bilan onset→sukut endpointing (to'liq gapni yozadi).
+  // Linux: getAmplitude o'lik (-160) → ESKI qat'iy oynaga qaytadi (biroz uzunroq).
+  static const int _winMs = 5000;             // Linux fallback qat'iy oyna
+  static const int _pollMs = 120;             // amplituda tekshiruv qadami
+  static const int _preOnsetMaxMs = 4200;     // gap boshlanishini kutish (ambient tez javob bersin)
+  static const int _maxUttMs = 11000;         // eng uzun gap (uzun savol ham sig'sin)
+  static const double _rmsMinDbfs = -48.0;    // muvozanat: user ovozi yutilmasin, uzoq shovqin ham kirmasin
   Future<String?> _capture() async {
     final path = '${Directory.systemTemp.path}/kadastr_utt.wav';
     try {
@@ -253,10 +257,34 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       await _sleep(600);
       return null;
     }
-    var waited = 0;
-    while (_on && !_busy && waited < _winMs) {
-      await _sleep(150);
-      waited += 150;
+    var waited = 0, spoken = 0, silence = 0;
+    var ampAlive = false, onset = false;
+    while (_on && !_busy) {
+      await _sleep(_pollMs);
+      waited += _pollMs;
+      if (_manual) return null; // tap-to-talk boshlandi → mikrofon unga tegishli
+      double db = -160;
+      try { db = (await _rec.getAmplitude()).current; } catch (_) {}
+      if (db > -120) ampAlive = true; // Linux -160 qaytaradi → o'lik deb bilamiz
+
+      if (!ampAlive) {
+        // Amplituda yo'q (Linux) → eski qat'iy oyna xulqi
+        if (waited >= _winMs) break;
+        continue;
+      }
+      if (!onset) {
+        if (db > Env.onsetDb) { onset = true; spoken = 0; silence = 0; }   // gap boshlandi
+        else if (waited >= _preOnsetMaxMs) { break; }                      // gap yo'q → sukut
+      } else {
+        spoken += _pollMs;
+        if (db < Env.stopDb) {
+          silence += _pollMs;
+          if (silence >= Env.endSilenceMs) break;                          // gap tugadi (sukut cho'zildi)
+        } else {
+          silence = 0;                                                     // yana gapiryapti
+        }
+        if (spoken >= _maxUttMs) break;                                    // xavfsizlik cheki
+      }
     }
     // Tap-to-talk boshlangan bo'lsa mikrofon ENDI unga tegishli — to'xtatib qo'ymaymiz
     if (_manual) return null;
