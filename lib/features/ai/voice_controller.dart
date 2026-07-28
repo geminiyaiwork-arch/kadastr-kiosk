@@ -400,19 +400,18 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   Future<void> _handle(String text) async {
     state = state.copyWith(heard: text);
     final onAi = onAiPage?.call() ?? false;
-    // BOSHQA sahifalarda faqat ISM bilan qabul qilinadi ("Kadastr AI ..." / "KAI ...") —
-    // atrofdagi begona suhbat AI'ni ishga tushirmaydi.
-    // AI SAHIFASIDA esa ism SHART EMAS (web-kiosk pariteti, directOnAi): foydalanuvchi
-    // AI ekraniga o'zi kirgan — savol (≥6 belgi) darhol qabul qilinadi. Avval har gapga
-    // "Kadastr AI" talab qilinardi → birinchi savol tashlab yuborilib, "sekin javob
-    // beryapti" his qilinardi. Echo-himoya: _quietUntil (2.5s) + _busy + _valid saqlanadi.
+    // HAMMA sahifada (AI sahifasida ham) faqat ISM bilan qabul qilinadi:
+    // "Kadastr AI ..." / "KAI ..." — atrofdagi begona suhbat AI'ni ishga tushirmaydi.
+    // (2026-07-28: "ismsiz savol" sinovi QAYTARILDI — user talabi: faqat ism aytilganda
+    //  uyg'onib javob bersin; ismsiz rejimда begona gaplarga ham javob berib yuborardi.)
+    // Istisno: KAI o'zi javob berganidan keyin 15s "suhbat oynasi" — davom savoli
+    // ISMSIZ ham qabul qilinadi. Mikrofon TUGMASI esa ism talab qilmaydi.
     final cmd = _stripWake(text);
     String content;
     if (cmd != null) {
       content = cmd;
-    } else if (onAi &&
-        (DateTime.now().isBefore(_followUntil) || text.trim().length >= 6)) {
-      content = text; // AI sahifasida ismsiz savol / follow-up
+    } else if (onAi && DateTime.now().isBefore(_followUntil)) {
+      content = text; // "Kadastr AI"dan keyingi BIR martalik ismsiz javob
       _followUntil = DateTime.fromMillisecondsSinceEpoch(0); // qayta uzaymaydi
     } else {
       _logHeard(text, acted: false); // eshitildi, lekin ism yo'q — E'TIBORSIZ

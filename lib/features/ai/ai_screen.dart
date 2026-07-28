@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,25 +17,42 @@ import '../../core/util/fmt.dart';
 import 'voice_controller.dart';
 
 /// AI sahifa — IKKI HOLAT (user spec 2026-07-28):
-///  1) KIRGANDA / persona-suhbatda: ESKI ko'rinish — qora fon, TO'LIQ EKRAN avatar,
-///     salomlashuv Wav2Lip lab-sinx VIDEO bilan (mockup bu bosqichda YO'Q).
-///  2) MA'LUMOTLI JAVOB berganda: MOCKUP 1:1 — och fon, yuqorida JAVOB MATNI kartasi
-///     (raqamlar indigo-bold) + yuqori-o'ngda DUMALOQ avatar (yashil nuqta), qidiruv,
-///     "Kadastr xizmatlari" ro'yxati (javob JADVALI shu uslubda; jadvalsiz — 5 real
-///     xizmat karta /stats + /xatlov937), pastda katta halo-mikrofon + "Javob
-///     beryapman…" pilli + '...' (suhbatni tozalash → to'liq-ekran avatarga qaytadi).
+///  1) KIRGANDA / persona-suhbatda: qora fon, TO'LIQ EKRAN avatar, salomlashuv
+///     Wav2Lip lab-sinx VIDEO bilan (HTML-mockup bu bosqichda YO'Q).
+///  2) MA'LUMOTLI JAVOB berganda: HTML-mockup 1:1 (kadastr-kiosk.html, 940x1832
+///     dizayn-kanvas, FittedBox bilan masshtab): teskari-radiusli oq panel (ichida
+///     JAVOB MATNI, raqamlar indigo-bold), dumaloq avatar (oq halqa + pulsli yashil
+///     nuqta), qidiruv, "Kadastr xizmatlari" qatorlari (javob JADVALI shu uslubda,
+///     jadvalsiz — 5 real xizmat qator), halo-mikrofon (gradient), to'lqinli status
+///     pilli, '...' (suhbatni tozalash), pastda dekorativ chiziqlar.
 class AiScreen extends ConsumerStatefulWidget {
   const AiScreen({super.key});
   @override
   ConsumerState<AiScreen> createState() => _AiScreenState();
 }
 
-class _AiScreenState extends ConsumerState<AiScreen> {
-  static const _bg = Color(0xFFEEF1FA);
-  static const _ink = Color(0xFF232A4D);
-  static const _indigo = Color(0xFF5457F5);
-  static const _hintCol = Color(0xFFAAB0D0);
+// ===== HTML dizayn konstantalari (kadastr-kiosk.html :root) =====
+const _dW = 940.0, _dH = 1832.0; // dizayn kanvas
+const _cBg = Color(0xFFEEF1FB);
+const _cInk = Color(0xFF111C3F);
+const _cInk2 = Color(0xFF1F2A4D);
+const _cMuted = Color(0xFF9AA3BD);
+const _cIndigo = Color(0xFF4F46E5);
 
+class _Pal {
+  const _Pal(this.icon, this.iconBg, this.pillBg, this.fg);
+  final IconData icon;
+  final Color iconBg, pillBg, fg;
+}
+
+const _palBlue = _Pal(Icons.description_rounded, Color(0xFFE3EBFD), Color(0xFFE8EFFD), Color(0xFF2F6BED));
+const _palGreen = _Pal(Icons.location_on_rounded, Color(0xFFD5F4E6), Color(0xFFDEF6EC), Color(0xFF12B981));
+const _palPurple = _Pal(Icons.home_rounded, Color(0xFFEFE4FD), Color(0xFFF2E9FD), Color(0xFF8B5CF6));
+const _palSky = _Pal(Icons.apartment_rounded, Color(0xFFDBEAFE), Color(0xFFE4EEFD), Color(0xFF3B82F6));
+const _palOrange = _Pal(Icons.location_on_rounded, Color(0xFFFFE6D2), Color(0xFFFFECE0), Color(0xFFF97316));
+const _pals = [_palBlue, _palGreen, _palPurple, _palSky, _palOrange];
+
+class _AiScreenState extends ConsumerState<AiScreen> {
   // Burchakka chiqish spin'i FAQAT OLDINGA aylansin: har chiqishda +1 tur.
   bool _wasCorner = false;
   int _spins = 0;
@@ -95,7 +113,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     _searchCtrl.clear();
   }
 
-  /// Yozib yuborilgan (qidiruv) yoki xizmat kartasidan kelgan savol.
+  /// Yozib yuborilgan (qidiruv) yoki xizmat qatoridан kelgan savol.
   void _ask(String q) {
     final s = q.trim();
     if (s.length < 2) return;
@@ -130,7 +148,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     }
   }
 
-  /// MOCKUP (och ekran) status matni — emojisiz (yonida to'lqin ikonkasi bor).
+  /// MOCKUP (och ekran) status matni — emojisiz (yonida animatsion to'lqin bor).
   String _statusNew(VoiceUiState v, Map<String, dynamic> t) {
     final lang = ref.read(localeProvider);
     if (v.error == 'mic') return t['aiMic'];
@@ -155,43 +173,6 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     }
   }
 
-  String _cell(dynamic v) {
-    final s = '$v';
-    final n = num.tryParse(s.replaceAll(RegExp(r'[\s ]'), ''));
-    return n != null ? fmt(n) : s;
-  }
-
-  /// Matndagi RAQAMLAR indigo-bold bo'lib ajraladi (mockupdagidek).
-  List<TextSpan> _rich(String t, double fs) {
-    final base = TextStyle(fontSize: fs, fontWeight: FontWeight.w600, color: _ink, height: 1.45);
-    final numS = TextStyle(fontSize: fs, fontWeight: FontWeight.w800, color: _indigo, height: 1.45);
-    final out = <TextSpan>[];
-    final re = RegExp(r'\d[\d\s ]*\d|\d');
-    var last = 0;
-    for (final m in re.allMatches(t)) {
-      if (m.start > last) out.add(TextSpan(text: t.substring(last, m.start), style: base));
-      out.add(TextSpan(text: m.group(0), style: numS));
-      last = m.end;
-    }
-    if (last < t.length) out.add(TextSpan(text: t.substring(last), style: base));
-    return out;
-  }
-
-  /// Jadval qatori uchun mavzuga mos ikonka + rang (mockup: hujjat/pin/uy/bino).
-  (IconData, Color, Color) _badge(String label) {
-    final l = label.toLowerCase();
-    if (l.contains('mulk') || l.contains('uy') || l.contains('xonadon')) {
-      return (Icons.home_rounded, const Color(0xFFE3F0FE), const Color(0xFF2E90FA));
-    }
-    if (l.contains('yer') || l.contains('uchastka') || l.contains('maydon')) {
-      return (Icons.location_on_rounded, const Color(0xFFE2F8EC), const Color(0xFF16B364));
-    }
-    if (l.contains('aholi') || l.contains('mahalla')) {
-      return (Icons.groups_rounded, const Color(0xFFEDE7FE), const Color(0xFF7C5CFC));
-    }
-    return (Icons.apartment_rounded, const Color(0xFFE7ECFE), const Color(0xFF3B5BFE));
-  }
-
   static const _fx = Duration(milliseconds: 520);
   static const _fxCurve = Curves.easeInOutCubic;
 
@@ -213,30 +194,71 @@ class _AiScreenState extends ConsumerState<AiScreen> {
 
     return AnimatedContainer(
       duration: _fx,
-      color: hasData ? _bg : T.aiDark, // javobda OCH fon (mockup), aks holda qora avatar-ekran
+      color: hasData ? _cBg : T.aiDark, // javobda OCH fon (HTML), aks holda qora avatar-ekran
       child: LayoutBuilder(builder: (context, c) {
         final w = c.maxWidth, h = c.maxHeight;
-        // Avatar holatlari:
-        //  javob YO'Q (salomlashuv/persona) -> TO'LIQ EKRAN (video/rasm)
-        //  MA'LUMOTLI javob                 -> yuqori-o'ng DUMALOQ (mockup, yashil nuqta)
-        const corner = 252.0;
-        final ap = ref.watch(avatarPlayerProvider);
-        final rect = hasData
-            ? Rect.fromLTWH(w - corner - 36, 100, corner, corner)
+        // HTML dizayn-kanvas masshtabi (scale wrapper bilan bir xil):
+        final s = math.min(w / _dW, h / _dH);
+        final ox = (w - _dW * s) / 2, oy = (h - _dH * s) / 2;
+        // Avatar: HTML .avatar {right:41; top:104; 212x212} — halqa 9px oq padding.
+        final avRect = hasData
+            ? Rect.fromLTWH(ox + (_dW - 41 - 212) * s, oy + 104 * s, 212 * s, 212 * s)
             : Rect.fromLTWH(0, 0, w, h);
+        final ap = ref.watch(avatarPlayerProvider);
         final cornerNow = hasData;
         if (cornerNow && !_wasCorner) _spins++; // burchakka chiqishda bir tur oldinga
         _wasCorner = cornerNow;
         return Stack(
           children: [
-            // ======= AVATAR (bitta widget, to'liq ekran <-> doira ANIMATSIYA) =======
+            // ======= MOCKUP sahna (faqat MA'LUMOTLI JAVOBDA ko'rinadi) =======
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: !hasData,
+                child: AnimatedOpacity(
+                  duration: _fx,
+                  curve: _fxCurve,
+                  opacity: hasData ? 1 : 0,
+                  child: !hasData
+                      ? const SizedBox.shrink()
+                      : Center(
+                          child: FittedBox(
+                            fit: BoxFit.contain,
+                            child: SizedBox(
+                              width: _dW,
+                              height: _dH,
+                              child: _MockStage(
+                                t: t,
+                                v: v,
+                                statusText: _statusNew(v, t),
+                                searchCtrl: _searchCtrl,
+                                q: _q,
+                                onQ: (s2) => setState(() => _q = s2),
+                                onClearQ: () => setState(_clearSearch),
+                                onAsk: _ask,
+                                onBack: () => context.go('/'),
+                                onMic: () => ref.read(voiceProvider.notifier).toggleTalk(),
+                                onDots: () {
+                                  final vc = ref.read(voiceProvider.notifier);
+                                  vc.stopSpeaking();
+                                  vc.resetConversation();
+                                  setState(_clearSearch);
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+            ),
+
+            // ======= AVATAR (bitta widget: to'liq ekran <-> HTML doira ANIMATSIYA) =======
             AnimatedPositioned(
               duration: _fx,
               curve: _fxCurve,
-              left: rect.left,
-              top: rect.top,
-              width: rect.width,
-              height: rect.height,
+              left: avRect.left,
+              top: avRect.top,
+              width: avRect.width,
+              height: avRect.height,
               child: AnimatedRotation(
                 turns: _spins.toDouble(),
                 duration: _fx,
@@ -248,20 +270,21 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                     clipBehavior: Clip.antiAlias,
                     decoration: BoxDecoration(
                       color: const Color(0xFF1E1E1E),
-                      borderRadius: BorderRadius.circular(hasData ? corner / 2 : 0),
-                      border: hasData
-                          ? Border.all(color: v.speaking ? _indigo : Colors.white, width: 6)
+                      borderRadius: BorderRadius.circular(hasData ? avRect.width / 2 : 0),
+                      // HTML .ring: oq halqa (padding 9) + yumshoq soya
+                      border: hasData ? Border.all(color: Colors.white, width: 9) : null,
+                      boxShadow: hasData
+                          ? [
+                              if (v.speaking)
+                                const BoxShadow(color: Color(0x59635BEB), blurRadius: 34, spreadRadius: 4)
+                              else
+                                const BoxShadow(color: Color(0x1A3C5096), blurRadius: 30, offset: Offset(0, 10)),
+                            ]
                           : null,
-                      boxShadow: v.speaking
-                          ? [const BoxShadow(color: Color(0x732F6FE3), blurRadius: 46, spreadRadius: 6)]
-                          : (hasData
-                              ? [const BoxShadow(color: Color(0x2410266B), blurRadius: 24, offset: Offset(0, 8))]
-                              : null),
                     ),
                     child: Builder(builder: (context) {
-                      // MULOQAT javobida (salom/persona) LAB-SINXRON video generatsiya qilinadi
-                      // (video_player_win = WMF, SAC-xavfsiz). Video faol bo'lsa — o'ynaydi;
-                      // aks holda STATIK avatar rasmi.
+                      // MULOQAT javobida (salom/persona) LAB-SINXRON video (video_player_win =
+                      // WMF, SAC-xavfsiz). Video faol bo'lsa — o'ynaydi; aks holda STATIK rasm.
                       final vc = ap.controller;
                       if (vc != null && vc.value.isInitialized) {
                         final vs = vc.value.size;
@@ -279,21 +302,22 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                           ? Image.network(url,
                               fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) =>
-                                  Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white)))
-                          : Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white));
+                                  Center(child: kIcon('ai', size: hasData ? 90 : 220, color: Colors.white)))
+                          : Center(child: kIcon('ai', size: hasData ? 90 : 220, color: Colors.white));
                     }),
                   ),
+                  // HTML .dot: yashil onlayn nuqta (34px + 5px oq chegara, right/bottom 14)
                   if (hasData)
                     Positioned(
-                      right: 8,
-                      bottom: 8,
+                      right: 14 * s,
+                      bottom: 14 * s,
                       child: Container(
-                        width: 46,
-                        height: 46,
+                        width: 36,
+                        height: 36,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF22C55E),
+                          color: const Color(0xFF12C56A),
                           shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 6),
+                          border: Border.all(color: Colors.white, width: 5),
                         ),
                       ),
                     ),
@@ -302,7 +326,6 @@ class _AiScreenState extends ConsumerState<AiScreen> {
             ),
 
             // ======= ESKI QORA-EKRAN boshqaruvlari (salomlashuv/persona holati) =======
-            // exit pill — pastki-chap
             if (!hasData)
               Positioned(
                 bottom: 44,
@@ -336,7 +359,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                       height: v.recording ? 172 : 150,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: v.recording ? const Color(0xFFE5484D) : _indigo,
+                        color: v.recording ? const Color(0xFFE5484D) : const Color(0xFF5457F5),
                         boxShadow: [
                           BoxShadow(
                             color: v.recording ? const Color(0x66E5484D) : const Color(0x4D5457F5),
@@ -371,19 +394,6 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                 ),
               ),
 
-            // ======= MOCKUP 1:1 (faqat MA'LUMOTLI JAVOBDA) =======
-            Positioned.fill(
-              child: IgnorePointer(
-                ignoring: !hasData,
-                child: AnimatedOpacity(
-                  duration: _fx,
-                  curve: _fxCurve,
-                  opacity: hasData ? 1 : 0,
-                  child: hasData ? _mockupBody(t, v) : const SizedBox.shrink(),
-                ),
-              ),
-            ),
-
             // WARMUP qatlami — bilinar-bilinmas 0101 + foiz chizig'i
             if (_isWarmup)
               Positioned.fill(
@@ -394,27 +404,115 @@ class _AiScreenState extends ConsumerState<AiScreen> {
       }),
     );
   }
+}
 
-  /// MOCKUP tanasi: orqaga + javob-karta + qidiruv + ro'yxat + mikrofon + pill + '...'
-  Widget _mockupBody(Map<String, dynamic> t, VoiceUiState v) {
+/// HTML-mockup sahnasi — 940x1832 DIZAYN BIRLIKLARIDA chiziladi (FittedBox masshtablaydi).
+/// Avatar bu sahnaga KIRMAYDI (u tepada AnimatedPositioned bilan "uchib" keladi).
+class _MockStage extends ConsumerStatefulWidget {
+  const _MockStage({
+    required this.t,
+    required this.v,
+    required this.statusText,
+    required this.searchCtrl,
+    required this.q,
+    required this.onQ,
+    required this.onClearQ,
+    required this.onAsk,
+    required this.onBack,
+    required this.onMic,
+    required this.onDots,
+  });
+  final Map<String, dynamic> t;
+  final VoiceUiState v;
+  final String statusText;
+  final TextEditingController searchCtrl;
+  final String q;
+  final void Function(String) onQ;
+  final VoidCallback onClearQ;
+  final void Function(String) onAsk;
+  final VoidCallback onBack;
+  final VoidCallback onMic;
+  final VoidCallback onDots;
+
+  @override
+  ConsumerState<_MockStage> createState() => _MockStageState();
+}
+
+class _MockStageState extends ConsumerState<_MockStage> with SingleTickerProviderStateMixin {
+  late final AnimationController _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    // HTML animatsiyalari: halo 2.6s, to'lqin 1s, dot 2.4s — bitta 5.2s davrdan olinadi.
+    _anim = AnimationController(vsync: this, duration: const Duration(milliseconds: 5200))..repeat();
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  /// Qator uchun palitra: xizmatlarda tartib bo'yicha, jadvalda indeks bo'yicha aylanadi;
+  /// ikonka nom mazmuniga qarab (uy/yer/mahalla/bino).
+  _Pal _rowPal(String label, int i) {
+    final base = _pals[i % _pals.length];
+    final l = label.toLowerCase();
+    IconData ic = base.icon;
+    if (l.contains('mulk') || l.contains('uy') || l.contains('xonadon')) {
+      ic = Icons.home_rounded;
+    } else if (l.contains('yer') || l.contains('uchastka') || l.contains('maydon')) {
+      ic = Icons.location_on_rounded;
+    } else if (l.contains('mahalla') || l.contains('aholi')) {
+      ic = Icons.groups_rounded;
+    } else if (l.contains('tuman') || l.contains('shahar') || l.contains('bino') || l.contains('obyekt')) {
+      ic = Icons.apartment_rounded;
+    }
+    return _Pal(ic, base.iconBg, base.pillBg, base.fg);
+  }
+
+  /// Javob matni: RAQAMLAR indigo-bold (HTML uslubidagi urg'u).
+  List<TextSpan> _rich(String txt, double fs) {
+    final base = TextStyle(fontSize: fs, fontWeight: FontWeight.w500, color: _cInk2, height: 1.55);
+    final numS = TextStyle(fontSize: fs, fontWeight: FontWeight.w800, color: _cIndigo, height: 1.55);
+    final out = <TextSpan>[];
+    final re = RegExp(r'\d[\d\s ]*\d|\d');
+    var last = 0;
+    for (final m in re.allMatches(txt)) {
+      if (m.start > last) out.add(TextSpan(text: txt.substring(last, m.start), style: base));
+      out.add(TextSpan(text: m.group(0), style: numS));
+      last = m.end;
+    }
+    if (last < txt.length) out.add(TextSpan(text: txt.substring(last), style: base));
+    return out;
+  }
+
+  String _cell(dynamic v) {
+    final s = '$v';
+    final n = num.tryParse(s.replaceAll(RegExp(r'[\s ]'), ''));
+    return n != null ? fmt(n) : s;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    final v = widget.v;
+
+    // Xizmat qatorlari — REAL raqamlar (/stats + /xatlov937 total c9/c10/c16)
     final stats = ref.watch(statsProvider).valueOrNull;
     final xat = ref.watch(xatlov937Provider).valueOrNull;
     final xt = (xat?['total'] is Map) ? Map<String, dynamic>.from(xat!['total'] as Map) : const <String, dynamic>{};
     int? xn(String k) => (xt[k] is num) ? (xt[k] as num).toInt() : null;
-    final services = <_Svc>[
-      _Svc(Icons.description_rounded, const Color(0xFFE3F0FE), const Color(0xFF2E90FA),
-          t['svcArizalar'], stats?.arizalar, 'Arizalar statistikasi'),
-      _Svc(Icons.location_on_rounded, const Color(0xFFE2F8EC), const Color(0xFF16B364),
-          t['svcAuksion'], stats?.auksionYerlar, 'Auksion yerlar statistikasi'),
-      _Svc(Icons.home_work_rounded, const Color(0xFFEDE7FE), const Color(0xFF7C5CFC),
-          t['svcMfy'], xn('c9'), 'Xatlov statistikasi'),
-      _Svc(Icons.apartment_rounded, const Color(0xFFE7ECFE), const Color(0xFF3B5BFE),
-          t['svcXatlov'], xn('c10'), 'Xatlov obyektlari soni'),
-      _Svc(Icons.fmd_good_rounded, const Color(0xFFFEF0E3), const Color(0xFFF79009),
-          t['svcXatlovDone'], xn('c16'), 'Xatlovdan o‘tkazilgan obyektlar soni'),
+    final services = <(String, int?, String)>[
+      (t['svcArizalar'], stats?.arizalar, 'Arizalar statistikasi'),
+      (t['svcAuksion'], stats?.auksionYerlar, 'Auksion yerlar statistikasi'),
+      (t['svcMfy'], xn('c9'), 'Xatlov statistikasi'),
+      (t['svcXatlov'], xn('c10'), 'Xatlov obyektlari soni'),
+      (t['svcXatlovDone'], xn('c16'), 'Xatlovdan o‘tkazilgan obyektlar soni'),
     ];
 
-    final ql = _q.trim().toLowerCase();
+    final ql = widget.q.trim().toLowerCase();
     final allRows = v.table ?? const <List<dynamic>>[];
     final headed = allRows.isNotEmpty &&
         allRows[0].length > 1 &&
@@ -424,302 +522,345 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final rows = ql.isEmpty
         ? body
         : body.where((r) => '${r.isNotEmpty ? r[0] : ''}'.toLowerCase().contains(ql)).toList();
-    final svcRows = ql.isEmpty ? services : services.where((s) => s.label.toLowerCase().contains(ql)).toList();
+    final svcRows = ql.isEmpty
+        ? services
+        : services.where((s2) => s2.$1.toLowerCase().contains(ql)).toList();
 
-    final fs = v.answer.length > 220 ? 27.0 : 31.0;
+    final recording = v.recording;
+    final micCol1 = recording ? const Color(0xFFE5484D) : const Color(0xFF5B4BF0);
+    final micCol2 = recording ? const Color(0xFFC73A3F) : const Color(0xFF4A3FDD);
 
-    return Stack(children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(36, 36, 36, 0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Orqaga (yuqori-chap, mockup)
-            Row(children: [
-              _SquareBtn(
-                onTap: () => context.go('/'),
-                child: const Icon(Icons.arrow_back_ios_new_rounded, color: _ink, size: 36),
-              ),
-            ]),
-            const SizedBox(height: 22),
-            // JAVOB MATNI kartasi — o'ng tomonda avatar doirasi uchun joy qoldiradi.
-            // Min balandlik: qidiruv paneli avatar doirasi (past chekkasi ~352) ostidan boshlansin.
-            ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 226),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 430),
-                      child: Container(
-                        padding: const EdgeInsets.fromLTRB(28, 26, 28, 26),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(28),
-                          boxShadow: const [BoxShadow(color: Color(0x1229306B), offset: Offset(0, 6), blurRadius: 20)],
-                        ),
-                        child: SingleChildScrollView(
-                          child: RichText(text: TextSpan(children: _rich(v.answer, fs))),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 274), // avatar doirasi joyi (Stack ustida chiziladi)
-                ],
-              ),
-            ),
-            const SizedBox(height: 26),
-            // Qidiruv (mockup)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 26),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(26),
-                boxShadow: const [BoxShadow(color: Color(0x1229306B), offset: Offset(0, 5), blurRadius: 18)],
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.search_rounded, color: Color(0xFF9AA1C7), size: 34),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: TextField(
-                      controller: _searchCtrl,
-                      onChanged: (s) => setState(() => _q = s),
-                      onSubmitted: _ask,
-                      style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w600, color: _ink),
-                      decoration: InputDecoration(
-                        isCollapsed: true,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 30),
-                        border: InputBorder.none,
-                        hintText: t['aiSearch'],
-                        hintStyle: const TextStyle(fontSize: 27, fontWeight: FontWeight.w500, color: _hintCol),
-                      ),
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: _q.isEmpty ? null : () => setState(_clearSearch),
-                    child: Icon(_q.isEmpty ? Icons.tune_rounded : Icons.close_rounded,
-                        color: const Color(0xFF9AA1C7), size: 32),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 26),
-            Text(t['aiServices'],
-                style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800, color: _ink)),
-            const SizedBox(height: 16),
-            // Ro'yxat: javob JADVALI (bo'lsa) — mockup karta-uslubida; bo'lmasa 5 xizmat karta
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.only(bottom: 470),
-                children: hasTable
-                    ? [
-                        if (rows.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 40),
-                            child: Center(
-                              child: Text('Topilmadi',
-                                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600, color: Color(0xFF9AA1C7))),
-                            ),
-                          ),
-                        for (final r in rows) _tableRow(r),
-                      ]
-                    : [for (final s in svcRows) _svcRow(s)],
-              ),
-            ),
-          ],
-        ),
-      ),
-      // Katta mikrofon (pastki markaz) — halo bilan
+    final fs = v.answer.length > 200 ? 21.0 : 23.0;
+
+    return Stack(clipBehavior: Clip.hardEdge, children: [
+      // ---- orqa fon chiziqlari (HTML .bg-lines) ----
       Positioned(
-        bottom: 200,
         left: 0,
         right: 0,
-        child: Center(
-          child: GestureDetector(
-            onTap: () => ref.read(voiceProvider.notifier).toggleTalk(),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: v.recording ? 268 : 252,
-              height: v.recording ? 268 : 252,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: (v.recording ? const Color(0xFFE5484D) : _indigo).withOpacity(0.10),
-              ),
-              alignment: Alignment.center,
-              child: Container(
-                width: 208,
-                height: 208,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: (v.recording ? const Color(0xFFE5484D) : _indigo).withOpacity(0.16),
-                ),
-                alignment: Alignment.center,
-                child: Container(
-                  width: 164,
-                  height: 164,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: v.recording ? const Color(0xFFE5484D) : _indigo,
-                    boxShadow: [
-                      BoxShadow(
-                        color: v.recording ? const Color(0x66E5484D) : const Color(0x4D5457F5),
-                        blurRadius: 38,
-                        spreadRadius: 4,
-                      ),
-                    ],
-                  ),
-                  child: Icon(v.recording ? Icons.stop_rounded : Icons.mic_rounded, color: Colors.white, size: 82),
-                ),
-              ),
-            ),
+        bottom: 0,
+        height: 640,
+        child: IgnorePointer(child: CustomPaint(painter: _BgLinesPainter())),
+      ),
+
+      // ---- salomlashuv paneli (teskari radiusli BITTA oq yuza) + JAVOB MATNI ----
+      Positioned(
+        left: 0,
+        top: 0,
+        width: _dW,
+        height: 560,
+        child: IgnorePointer(child: CustomPaint(painter: _PanelPainter())),
+      ),
+      // Javob matni panel ichida (HTML .panel-top joyi: left 80, top ~165, width 548)
+      Positioned(
+        left: 80,
+        top: 162,
+        width: 548,
+        height: 178,
+        child: SingleChildScrollView(
+          child: RichText(text: TextSpan(children: _rich(v.answer, fs))),
+        ),
+      ),
+      // gradient chiziqcha (HTML .rule) — panel pastki qismida aksent
+      Positioned(
+        left: 80,
+        top: 352,
+        child: Container(
+          width: 56,
+          height: 6,
+          decoration: const BoxDecoration(
+            borderRadius: BorderRadius.all(Radius.circular(6)),
+            gradient: LinearGradient(colors: [Color(0xFF5B4BF0), Color(0xFF8B8EF7), Color(0x008B8EF7)]),
           ),
         ),
       ),
-      // "..." (pastki-chap) — suhbatni tozalaydi -> to'liq-ekran avatarga qaytadi
+      // panel pastki keng qismida davom savoli (HTML .panel-ask uslubi)
       Positioned(
-        bottom: 64,
+        left: 80,
+        top: 374,
+        width: 740,
+        child: Text(t['aiAsk'],
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 23, height: 1.55, fontWeight: FontWeight.w400, color: _cInk2)),
+      ),
+
+      // ---- orqaga tugmasi (36,42,72x72,r21) ----
+      Positioned(
         left: 36,
-        child: _SquareBtn(
-          onTap: () {
-            final vc = ref.read(voiceProvider.notifier);
-            vc.stopSpeaking();
-            vc.resetConversation();
-            setState(_clearSearch);
-          },
-          child: const Icon(Icons.more_horiz_rounded, color: _ink, size: 40),
+        top: 42,
+        child: _SqBtn(
+          size: 72,
+          radius: 21,
+          onTap: widget.onBack,
+          child: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF16224A), size: 26),
         ),
       ),
-      // Status pill (pastki markaz) — to'lqin ikonkasi + holat matni
+
+      // ---- qidiruv (36,500,869x102,r26) ----
       Positioned(
-        bottom: 64,
-        left: 150,
-        right: 150,
+        left: 36,
+        top: 500,
+        width: 869,
+        height: 102,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 34),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(26),
+            boxShadow: const [BoxShadow(color: Color(0x0F3C5096), offset: Offset(0, 8), blurRadius: 28)],
+          ),
+          child: Row(children: [
+            const Icon(Icons.search_rounded, color: Color(0xFF8F97B2), size: 34),
+            const SizedBox(width: 22),
+            Expanded(
+              child: TextField(
+                controller: widget.searchCtrl,
+                onChanged: widget.onQ,
+                onSubmitted: widget.onAsk,
+                style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w500, color: _cInk),
+                decoration: InputDecoration(
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  hintText: t['aiSearch'],
+                  hintStyle: const TextStyle(fontSize: 25, fontWeight: FontWeight.w500, color: Color(0xFFA7AEC6)),
+                ),
+              ),
+            ),
+            GestureDetector(
+              onTap: widget.q.isEmpty ? null : widget.onClearQ,
+              child: Icon(widget.q.isEmpty ? Icons.tune_rounded : Icons.close_rounded,
+                  color: const Color(0xFF5B6A9A), size: 30),
+            ),
+          ]),
+        ),
+      ),
+
+      // ---- bo'lim sarlavhasi (57,636) ----
+      Positioned(
+        left: 57,
+        top: 636,
+        child: Text(t['aiServices'],
+            style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w700, color: _cInk)),
+      ),
+
+      // ---- ro'yxat (36,686,869; qator 116, oraliq 14) ----
+      Positioned(
+        left: 36,
+        top: 686,
+        width: 869,
+        height: 640,
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: hasTable
+              ? [
+                  if (rows.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 40),
+                      child: Center(
+                        child: Text('Topilmadi',
+                            style: TextStyle(fontSize: 23, fontWeight: FontWeight.w600, color: _cMuted)),
+                      ),
+                    ),
+                  for (var i = 0; i < rows.length; i++)
+                    _row(
+                      _rowPal('${rows[i].isNotEmpty ? rows[i][0] : ''}', i),
+                      '${rows[i].isNotEmpty ? rows[i][0] : ''}',
+                      rows[i].length > 1 ? _cell(rows[i][1]) : '',
+                      () => widget.onAsk('${rows[i].isNotEmpty ? rows[i][0] : ''} statistikasi'),
+                    ),
+                ]
+              : [
+                  for (var i = 0; i < svcRows.length; i++)
+                    _row(
+                      _rowPal(svcRows[i].$1, i),
+                      svcRows[i].$1,
+                      svcRows[i].$2 == null ? '…' : fmt(svcRows[i].$2!),
+                      () => widget.onAsk(svcRows[i].$3),
+                    ),
+                ],
+        ),
+      ),
+
+      // ---- mikrofon (markaz 470,1449; halo 190/150; tugma 126 gradient) ----
+      Positioned(
+        left: _dW / 2 - 100,
+        top: 1449 - 100,
+        width: 200,
+        height: 200,
+        child: GestureDetector(
+          onTap: widget.onMic,
+          child: AnimatedBuilder(
+            animation: _anim,
+            builder: (_, __) {
+              // HTML @keyframes halo: 2.6s davr, scale .92 -> 1.06
+              final ph = (_anim.value * 2.0) % 1.0; // 5.2s / 2 = 2.6s
+              final sc1 = 0.99 + 0.07 * math.sin(ph * 2 * math.pi);
+              final ph2 = ((_anim.value * 2.0) + 0.19) % 1.0; // .5s kechikish
+              final sc2 = 0.99 + 0.07 * math.sin(ph2 * 2 * math.pi);
+              return Stack(alignment: Alignment.center, children: [
+                Transform.scale(
+                  scale: sc1,
+                  child: Container(
+                    width: 190,
+                    height: 190,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: (recording ? const Color(0xFFE5484D) : const Color(0xFF635BEB)).withOpacity(0.13)),
+                  ),
+                ),
+                Transform.scale(
+                  scale: sc2,
+                  child: Container(
+                    width: 150,
+                    height: 150,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: (recording ? const Color(0xFFE5484D) : const Color(0xFF635BEB)).withOpacity(0.18)),
+                  ),
+                ),
+                Container(
+                  width: 126,
+                  height: 126,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                        begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [micCol1, micCol2]),
+                    boxShadow: [
+                      BoxShadow(
+                          color: (recording ? const Color(0xFFE5484D) : const Color(0xFF4F46E5)).withOpacity(0.42),
+                          offset: const Offset(0, 16),
+                          blurRadius: 34),
+                    ],
+                  ),
+                  child: Icon(recording ? Icons.stop_rounded : Icons.mic_rounded, color: Colors.white, size: 58),
+                ),
+              ]);
+            },
+          ),
+        ),
+      ),
+
+      // ---- '...' tugmasi (36,1546,72x72,r21) ----
+      Positioned(
+        left: 36,
+        top: 1546,
+        child: _SqBtn(
+          size: 72,
+          radius: 21,
+          onTap: widget.onDots,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            for (var i = 0; i < 3; i++)
+              Container(
+                width: 11,
+                height: 11,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: const BoxDecoration(color: _cInk, shape: BoxShape.circle),
+              ),
+          ]),
+        ),
+      ),
+
+      // ---- status pilli (markaz, top 1582, h62, r31) — animatsion to'lqin + matn ----
+      Positioned(
+        left: 0,
+        right: 0,
+        top: 1582,
         child: Center(
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 20),
+            height: 62,
+            padding: const EdgeInsets.symmetric(horizontal: 34),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(46),
-              boxShadow: const [BoxShadow(color: Color(0x2410266B), offset: Offset(0, 6), blurRadius: 22)],
+              borderRadius: BorderRadius.circular(31),
+              boxShadow: const [BoxShadow(color: Color(0x173C5096), offset: Offset(0, 8), blurRadius: 26)],
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.graphic_eq_rounded,
-                    color: v.recording ? const Color(0xFFE5484D) : _indigo, size: 36),
-                const SizedBox(width: 14),
-                Flexible(
-                  child: Text(_statusNew(v, t),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w700, color: _ink)),
-                ),
-              ],
-            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              AnimatedBuilder(
+                animation: _anim,
+                builder: (_, __) {
+                  // HTML @keyframes wv: 1s davr, balandlik 8 -> 24, 4 ta ustun .15s kechikish
+                  final base = _anim.value * 5.2; // soniya
+                  return SizedBox(
+                    height: 26,
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      for (var i = 0; i < 4; i++)
+                        Container(
+                          width: 5,
+                          height: 8 + 16 * (0.5 + 0.5 * math.sin(((base - i * 0.15) % 1.0) * 2 * math.pi)),
+                          margin: const EdgeInsets.symmetric(horizontal: 2),
+                          decoration: BoxDecoration(
+                            color: _cIndigo,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                    ]),
+                  );
+                },
+              ),
+              const SizedBox(width: 20),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Text(widget.statusText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600, color: _cInk)),
+              ),
+            ]),
           ),
         ),
       ),
     ]);
   }
 
-  /// Xizmat kartasi (mockup): ikonka-plitka + nom + rangli son-chip + chevron.
-  Widget _svcRow(_Svc s) {
+  /// HTML .row: 116px, r24, ico 74 r21, nom 25/600, son-pill h47 r13, chevron.
+  Widget _row(_Pal p, String name, String count, VoidCallback onTap) {
     return GestureDetector(
-      onTap: () => _ask(s.query),
+      onTap: onTap,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 18),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        height: 116,
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.only(left: 28, right: 36),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(26),
-          boxShadow: const [BoxShadow(color: Color(0x0F29306B), offset: Offset(0, 5), blurRadius: 16)],
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: const [BoxShadow(color: Color(0x0E3C5096), offset: Offset(0, 8), blurRadius: 24)],
         ),
-        child: Row(
-          children: [
-            Container(
-              width: 84,
-              height: 84,
-              decoration: BoxDecoration(color: s.iconBg, borderRadius: BorderRadius.circular(22)),
-              child: Icon(s.icon, color: s.color, size: 44),
-            ),
-            const SizedBox(width: 24),
-            Expanded(
-              child: Text(s.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 33, fontWeight: FontWeight.w700, color: _ink)),
-            ),
-            const SizedBox(width: 14),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              decoration: BoxDecoration(
-                color: s.iconBg,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(s.count == null ? '…' : fmt(s.count!),
-                  style: TextStyle(fontSize: 31, fontWeight: FontWeight.w800, color: s.color)),
-            ),
-            const SizedBox(width: 12),
-            const Icon(Icons.chevron_right_rounded, color: Color(0xFFC2C8E4), size: 40),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Javob jadvali qatori — xizmat kartalari bilan bir xil uslub.
-  Widget _tableRow(List<dynamic> r) {
-    final label = '${r.isNotEmpty ? r[0] : ''}';
-    final b = _badge(label);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: const [BoxShadow(color: Color(0x0F29306B), offset: Offset(0, 4), blurRadius: 14)],
-      ),
-      child: Row(
-        children: [
+        child: Row(children: [
           Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(color: b.$2, borderRadius: BorderRadius.circular(16)),
-            child: Icon(b.$1, color: b.$3, size: 34),
+            width: 74,
+            height: 74,
+            decoration: BoxDecoration(color: p.iconBg, borderRadius: BorderRadius.circular(21)),
+            child: Icon(p.icon, color: p.fg, size: 40),
           ),
-          const SizedBox(width: 20),
+          const SizedBox(width: 37),
           Expanded(
-            child: Text(label,
+            child: Text(name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 29, fontWeight: FontWeight.w600, color: _ink)),
+                style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w600, color: _cInk)),
           ),
           const SizedBox(width: 14),
-          Text(r.length > 1 ? _cell(r[1]) : '',
-              style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: _indigo)),
-          const SizedBox(width: 12),
-          const Icon(Icons.chevron_right_rounded, color: Color(0xFFC2C8E4), size: 36),
-        ],
+          Container(
+            height: 47,
+            constraints: const BoxConstraints(minWidth: 110),
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: p.pillBg, borderRadius: BorderRadius.circular(13)),
+            child: Text(count,
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: p.fg, letterSpacing: 0.2)),
+          ),
+          const SizedBox(width: 24),
+          const Icon(Icons.chevron_right_rounded, color: _cMuted, size: 28),
+        ]),
       ),
     );
   }
 }
 
-class _Svc {
-  const _Svc(this.icon, this.iconBg, this.color, this.label, this.count, this.query);
-  final IconData icon;
-  final Color iconBg;
-  final Color color;
-  final String label;
-  final int? count;
-  final String query;
-}
-
-/// Oq kvadrat tugma (orqaga / "...") — mockup uslubi.
-class _SquareBtn extends StatelessWidget {
-  const _SquareBtn({required this.onTap, required this.child});
+/// Oq kvadrat tugma (orqaga / '...') — HTML .back/.dots uslubi.
+class _SqBtn extends StatelessWidget {
+  const _SqBtn({required this.size, required this.radius, required this.onTap, required this.child});
+  final double size, radius;
   final VoidCallback onTap;
   final Widget child;
   @override
@@ -727,18 +868,82 @@ class _SquareBtn extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 92,
-        height: 92,
+        width: size,
+        height: size,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(26),
-          boxShadow: const [BoxShadow(color: Color(0x1F10266B), offset: Offset(0, 6), blurRadius: 18)],
+          borderRadius: BorderRadius.circular(radius),
+          boxShadow: const [BoxShadow(color: Color(0x143C5096), offset: Offset(0, 6), blurRadius: 20)],
         ),
         child: child,
       ),
     );
   }
+}
+
+/// HTML .panel-bg: teskari-radiusli oq panel (avatar atrofida 130px botiq yoy).
+/// Path koordinatalari kadastr-kiosk.html'dan AYNAN.
+class _PanelPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(64, 130)
+      ..lineTo(632, 130)
+      ..arcToPoint(const Offset(660, 158), radius: const Radius.circular(28))
+      ..lineTo(660, 205)
+      ..arcToPoint(const Offset(790, 335), radius: const Radius.circular(130), clockwise: false)
+      ..lineTo(877, 335)
+      ..arcToPoint(const Offset(905, 363), radius: const Radius.circular(28))
+      ..lineTo(905, 434)
+      ..arcToPoint(const Offset(877, 462), radius: const Radius.circular(28))
+      ..lineTo(64, 462)
+      ..arcToPoint(const Offset(36, 434), radius: const Radius.circular(28))
+      ..lineTo(36, 158)
+      ..arcToPoint(const Offset(64, 130), radius: const Radius.circular(28))
+      ..close();
+    // soya (HTML feDropShadow: dy 8, blur ~14, #3c5096 7%)
+    canvas.drawPath(
+      path.shift(const Offset(0, 8)),
+      Paint()
+        ..color = const Color(0x123C5096)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14),
+    );
+    canvas.drawPath(path, Paint()..color = Colors.white);
+  }
+
+  @override
+  bool shouldRepaint(_PanelPainter old) => false;
+}
+
+/// HTML .bg-lines: pastdagi 3 ta yengil dekorativ yoy.
+class _BgLinesPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    Paint st(Color c) => Paint()
+      ..color = c
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    final w = size.width, h = size.height;
+    final p1 = Path()
+      ..moveTo(-60, h)
+      ..cubicTo(-60, h - 260, 180, h - 340, w / 2, h - 340)
+      ..cubicTo(w - 180, h - 340, w + 60, h - 260, w + 60, h);
+    final p2 = Path()
+      ..moveTo(-60, h + 60)
+      ..cubicTo(-60, h - 220, 200, h - 295, w / 2, h - 295)
+      ..cubicTo(w - 200, h - 295, w + 60, h - 220, w + 60, h + 60);
+    final p3 = Path()
+      ..moveTo(120, h)
+      ..cubicTo(120, h - 170, 270, h - 250, w / 2, h - 250)
+      ..cubicTo(w - 270, h - 250, w - 120, h - 170, w - 120, h);
+    canvas.drawPath(p1, st(const Color(0xFFDFE5F7)));
+    canvas.drawPath(p2, st(const Color(0xFFE5EAF8)));
+    canvas.drawPath(p3, st(const Color(0xFFE7EBF9)));
+  }
+
+  @override
+  bool shouldRepaint(_BgLinesPainter old) => false;
 }
 
 /// AIга kirganда ustidан BILINAR-BILINMAS ko'rinadigan qatlam: Matrix uslubidagi
