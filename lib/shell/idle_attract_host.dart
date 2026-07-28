@@ -149,9 +149,9 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
     if (!mounted || _urls.isEmpty) return;
     await _open(0);
     if (!mounted) return;
-    // Animatsion effekt — playbackдан ALOHIDA taymer (har ~10s bir 3D flourish)
-    _fxTimer = Timer.periodic(const Duration(seconds: 10), (_) => _playFx());
-    // Bir nechta video bo'lsa — har ~20s keyingisiga o'tadi
+    // 3D "flourish" o'tishlar OLIB TASHLANDI (2026-07-28, user: "bachkana") — davlat
+    // kioski uchun jiddiy: video silliq loop, videolar orasida faqat mayin crossfade.
+    // Bir nechta video bo'lsa — har ~20s keyingisiga o'tadi (crossfade _advance ichida).
     if (_urls.length >= 2) {
       _advTimer = Timer.periodic(const Duration(seconds: 20), (_) => _advance());
     }
@@ -246,6 +246,14 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
                 ],
               ),
             const Positioned(top: 44, right: 44, child: _ClockWidget()),
+            // Chiroyli chaqiruv matni — "Yordam kerak bo'lsa «KAI» deb chaqiring"
+            if (_ready)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 210,
+                child: Center(child: _CallHint(text: t['attractCall'] ?? 'Yordam kerak bo‘lsa «KAI» deb chaqiring')),
+              ),
             Positioned(
               left: 40,
               bottom: 48,
@@ -268,6 +276,67 @@ class _AttractScreenState extends ConsumerState<_AttractScreen> with TickerProvi
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Zastavkadagi chiroyli chaqiruv matni — mikrofon ikonkasi + "«KAI» deb chaqiring",
+/// yumshoq nafas oluvchi glow (jiddiy, davlat-kioski uslubi).
+class _CallHint extends StatefulWidget {
+  const _CallHint({required this.text});
+  final String text;
+  @override
+  State<_CallHint> createState() => _CallHintState();
+}
+
+class _CallHintState extends State<_CallHint> with SingleTickerProviderStateMixin {
+  late final AnimationController _p =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 2200))..repeat(reverse: true);
+  @override
+  void dispose() {
+    _p.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _p,
+      builder: (_, __) {
+        final glow = 0.35 + 0.35 * _p.value;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 44, vertical: 26),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(colors: [Color(0xE61B2A4A), Color(0xE60E1A34)]),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: Color.fromRGBO(120, 150, 255, glow), width: 2),
+            boxShadow: [
+              BoxShadow(color: Color.fromRGBO(84, 87, 245, glow * 0.6), blurRadius: 40, spreadRadius: 2),
+              const BoxShadow(color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8)),
+            ],
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 62,
+              height: 62,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                    begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF5B4BF0), Color(0xFF4A3FDD)]),
+              ),
+              child: const Icon(Icons.mic_rounded, color: Colors.white, size: 36),
+            ),
+            const SizedBox(width: 22),
+            Text(widget.text,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 38,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                    shadows: [Shadow(color: Color(0x99000000), blurRadius: 10, offset: Offset(0, 2))])),
+          ]),
+        );
+      },
     );
   }
 }

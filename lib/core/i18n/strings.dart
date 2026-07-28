@@ -83,6 +83,8 @@ const Map<String, Map<String, dynamic>> I18N = {
     'feNoFace': 'Yuz aniqlanmadi. Yorug‘roq joyda qayta urinib ko‘ring.',
     'feNoCam': 'Kamera topilmadi yoki ochilmadi.', 'feFail': 'Saqlab bo‘lmadi. Qayta urinib ko‘ring.',
     'feListening': 'Eshityapman…',
+    'feSuggest': 'Kechirasiz, to‘liq tushunmadim. Quyidagi xizmatlardan birini tanlang:',
+    'attractCall': 'Yordam kerak bo‘lsa «KAI» deb chaqiring',
   },
   'ru': {
     'langName': 'Русский',
@@ -157,6 +159,8 @@ const Map<String, Map<String, dynamic>> I18N = {
     'feNoFace': 'Лицо не распознано. Попробуйте в более светлом месте.',
     'feNoCam': 'Камера не найдена или не открылась.', 'feFail': 'Не удалось сохранить. Попробуйте ещё раз.',
     'feListening': 'Слушаю…',
+    'feSuggest': 'Извините, не совсем понял. Выберите одну из услуг ниже:',
+    'attractCall': 'Нужна помощь? Скажите «KAI»',
   },
   'en': {
     'langName': 'English',
@@ -231,5 +235,7 @@ const Map<String, Map<String, dynamic>> I18N = {
     'feNoFace': 'No face detected. Try again in better lighting.',
     'feNoCam': 'Camera not found or failed to open.', 'feFail': 'Could not save. Please try again.',
     'feListening': 'Listening…',
+    'feSuggest': 'Sorry, I did not quite understand. Choose one of the services below:',
+    'attractCall': 'Need help? Just say “KAI”',
   },
 };

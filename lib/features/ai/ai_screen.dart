@@ -185,7 +185,9 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final url = enabled ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}' : null;
     // JIM-HOLAT imo-ishora videosi tayyorlansin (Windows; bir marta yuklanadi)
     if (enabled) ref.read(avatarPlayerProvider.notifier).ensureIdle(avatar);
-    final hasData = v.answer.isNotEmpty;
+    // suggest = chala/tushunarsiz gap → xizmat kartalari bilan mockup ekranга o'tamiz
+    // (avatar burchakka, javob paneliда "tanlang", pastда 5 xizmat qatori — bosiladi).
+    final hasData = v.answer.isNotEmpty || v.suggest;
 
     // Yangi javob kelsa qidiruv tozalanadi (eski filtr yopishib qolmasin)
     ref.listen(voiceProvider.select((s) => s.answer), (prev, next) {
@@ -550,14 +552,18 @@ class _MockStageState extends ConsumerState<_MockStage> with SingleTickerProvide
         height: 560,
         child: IgnorePointer(child: CustomPaint(painter: _PanelPainter())),
       ),
-      // Javob matni panel ichida (HTML .panel-top joyi: left 80, top ~165, width 548)
+      // Javob matni panel ichida (HTML .panel-top joyi: left 80, top ~165, width 548).
+      // Javob bo'sh + suggest bo'lsa — "tushunmadim, tanlang" matni (chala gap holati).
       Positioned(
         left: 80,
         top: 162,
         width: 548,
         height: 178,
         child: SingleChildScrollView(
-          child: RichText(text: TextSpan(children: _rich(v.answer, fs))),
+          child: v.answer.isNotEmpty
+              ? RichText(text: TextSpan(children: _rich(v.answer, fs)))
+              : Text(t['feSuggest'] ?? 'Kechirasiz, tushunmadim. Quyidagilardan tanlang:',
+                  style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w600, color: _cInk2, height: 1.5)),
         ),
       ),
       // gradient chiziqcha (HTML .rule) — panel pastki qismida aksent

@@ -22,6 +22,7 @@ class VoiceUiState {
   final List<List<dynamic>>? table;
   final bool speaking;
   final bool recording; // tap-to-talk: qo'lda yozilyapti
+  final bool suggest; // gap chala/tushunarsiz — xizmat turlarini taklif qilamiz
   final String? error;
   const VoiceUiState({
     this.phase = VoicePhase.off,
@@ -30,6 +31,7 @@ class VoiceUiState {
     this.table,
     this.speaking = false,
     this.recording = false,
+    this.suggest = false,
     this.error,
   });
 
@@ -40,6 +42,7 @@ class VoiceUiState {
           List<List<dynamic>>? table,
           bool? speaking,
           bool? recording,
+          bool? suggest,
           String? error,
           bool clearError = false,
           bool clearTable = false}) =>
@@ -50,6 +53,7 @@ class VoiceUiState {
         table: clearTable ? null : (table ?? this.table),
         speaking: speaking ?? this.speaking,
         recording: recording ?? this.recording,
+        suggest: suggest ?? this.suggest,
         error: clearError ? null : (error ?? this.error),
       );
 }
@@ -171,7 +175,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   /// AI sahifasiga qayta kirilganda ESKI javob/jadval tozalanadi —
   /// avatar to'liq ekranda salomlashadi (eski karta ustida emas).
   void resetConversation() {
-    state = state.copyWith(answer: '', heard: '', clearTable: true);
+    state = state.copyWith(answer: '', heard: '', clearTable: true, suggest: false);
   }
 
   /// Speak a greeting / prompt (used when entering the AI page or on wake-only).
@@ -274,10 +278,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
           text != null &&
           _stripWake(text) != null &&
           DateTime.now().difference(_lastRepeat).inSeconds >= 20) {
-        // AI sahifasida TUSHUNARSIZ gap — qaytadan so'raymiz (20s cooldown:
-        // fon shovqinida har 3.6s "tushunmadim" spam bo'lmasin)
+        // AI sahifasida gap CHALA/TUSHUNARSIZ — "tushunmadim" deb + XIZMAT TURLARINI
+        // TAKLIF qilamiz (user: chala gapirsa xizmat turlarini ko'rsat; tugma bilan tanlaydi).
+        // 20s cooldown: fon shovqinida har 3.6s spam bo'lmasin.
         _lastRepeat = DateTime.now();
-        await _speak(_repeatPrompt(), video: false);
+        state = state.copyWith(suggest: true, answer: '', clearTable: true);
+        await _speak(_suggestPrompt(), video: false);
       } else {
         _busy = false;
       }
@@ -299,7 +305,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (DateTime.now().isBefore(_quietUntil)) { await _sleep(250); return null; }
     final path = '${Directory.systemTemp.path}/kadastr_utt.wav';
     try {
-      await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: path);
+      await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1, autoGain: true, noiseSuppress: true, echoCancel: true), path: path);
     } catch (_) {
       await _sleep(600);
       return null;
@@ -428,7 +434,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   }
 
   Future<void> _handle(String text) async {
-    state = state.copyWith(heard: text);
+    state = state.copyWith(heard: text, suggest: false);
     final onAi = onAiPage?.call() ?? false;
     // HAMMA sahifada (AI sahifasida ham) faqat ISM bilan qabul qilinadi:
     // "Kadastr AI ..." / "KAI ..." — atrofdagi begona suhbat AI'ni ishga tushirmaydi.
@@ -440,9 +446,13 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     String content;
     if (cmd != null) {
       content = cmd;
-    } else if (onAi && DateTime.now().isBefore(_followUntil)) {
-      content = text; // "Kadastr AI"dan keyingi BIR martalik ismsiz javob
-      _followUntil = DateTime.fromMillisecondsSinceEpoch(0); // qayta uzaymaydi
+    } else if (onAi && (DateTime.now().isBefore(_followUntil) || text.trim().length >= 5)) {
+      // AI SAHIFASIDA ism SHART EMAS (2026-07-28, user: "savol bersa o'sha zahoti javob
+      // bermayapti"): foydalanuvchi AI ekraniga O'ZI kirgan → to'g'ridan savolга javob
+      // beriladi. Begona-gap/o'z-ovoz xavfi endi EXO-FILTR (_isEcho) bilan yopilgan.
+      // BOSHQA sahifalarда esa hamon ism ("Kadastr AI") kerak.
+      content = text;
+      _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
     } else {
       _logHeard(text, acted: false); // eshitildi, lekin ism yo'q — E'TIBORSIZ
       _busy = false;
@@ -550,7 +560,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       }
       if (await _rec.isRecording()) await _rec.stop();
       final path = '${Directory.systemTemp.path}/kadastr_talk.wav';
-      await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: path);
+      await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1, autoGain: true, noiseSuppress: true, echoCancel: true), path: path);
       _manualPath = path;
       _manual = true;
       state = state.copyWith(phase: VoicePhase.listening, heard: '', recording: true, clearError: true);
@@ -598,7 +608,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
 
   Future<void> askAI(String q) async {
     _busy = true;
-    state = state.copyWith(phase: VoicePhase.thinking);
+    state = state.copyWith(phase: VoicePhase.thinking, suggest: false); // taklif holatidan chiqamiz
     String answer = '';
     List<List<dynamic>>? table;
     bool persona = false;
@@ -689,6 +699,13 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         'uz': 'Kechirasiz, tushunmadim. Qaytadan gapiring.',
         'ru': 'Извините, я не понял. Повторите, пожалуйста.',
         'en': 'Sorry, I did not understand. Please say it again.',
+      }[_lang]!;
+
+  /// Chala/tushunarsiz gap — xizmat turlarini taklif qilamiz.
+  String _suggestPrompt() => {
+        'uz': 'Kechirasiz, to‘liq tushunmadim. Quyidagi xizmatlardan birini tanlang yoki qaytadan ayting.',
+        'ru': 'Извините, не совсем понял. Выберите одну из услуг ниже или повторите.',
+        'en': 'Sorry, I did not quite understand. Choose one of the services below or say it again.',
       }[_lang]!;
 
   /// [video] = MULOQAT javobi (salom/persona/prompt) → LAB-SINXRON video generatsiya.
