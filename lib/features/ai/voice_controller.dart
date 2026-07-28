@@ -58,17 +58,22 @@ class VoiceUiState {
       );
 }
 
-/// Wake-word variants for "KAI" (= Kadastr AI), incl. Whisper mis-hearings.
+/// Uyg'otuvchi so'z = "ALOMAT" (2026-07-28, user talabi — "Kadastr AI" uzun edi, STT
+/// yomon eshitib uyg'onmasdi). Variantlar: Alomat / Alomatxon / Olomat + Whisper xato-yozuvi.
+/// _stripWake да startsWith('alomat'/'olomat'/... ) ham ushlaydi (qo'shimchali shakllar).
 const _wakeSet = {
-  'kai', 'kayi', 'kay', 'kei', 'key', 'kaye', 'kayy', 'kayu', 'kae', 'kya', 'kyi', 'keyi',
-  'kaii', 'kaiy', 'kaey', 'kaya', 'khai', 'khay', 'kaj', // qo'shimcha Whisper variantlari
-  'qai', 'qei', 'qey', 'qaii', // 'qayi' OLIB TASHLANDI — o'zbekcha "qay(si)" so'zi bilan chalkashardi (jonli: "qayi, non")
-  'кай', 'кей', 'кэй', 'кайи', 'каи', 'кая', 'каий', 'кайй',
-  'kadastr', 'cadastre', 'kadaster', 'kadastir', // imlo variantlari (startsWith ham ushlaydi)
+  'alomat', 'alomad', 'alomot', 'alamat', 'alamad', 'aloma', 'alomatxon', 'alomathon', 'alomatxan',
+  'olomat', 'olomad', 'olomot', 'olomatxon', 'alamatxon', 'alomac', 'alomatga',
+  'аломат', 'аломад', 'аломот', 'аламат', 'аломатхон', 'оломат', 'оломад', 'оломатхон', 'аломатхан',
 };
 
-// Fuzzy-moslik O'CHIRILDI: 'qo'y/qay/gey' kabi oddiy so'zlar ism deb olinardi.
+// Fuzzy-moslik O'CHIRILDI.
 bool _wakeFuzzy(String w) => false;
+
+/// Wake so'z boshi (startsWith) — "alomatga/alomatxon/olomatni" kabi qo'shimchali shakllar.
+bool _wakePrefix(String w) =>
+    w.startsWith('alomat') || w.startsWith('olomat') || w.startsWith('alamat') ||
+    w.startsWith('аломат') || w.startsWith('оломат') || w.startsWith('аламат');
 
 /// Single always-on voice engine: mic → VAD → /stt → wake-route → /ai/chat → TTS.
 /// Runs globally; on the AI page the wake word is optional.
@@ -413,20 +418,15 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     var wi = -1;
     for (var i = 0; i < min(3, words.length); i++) {
       final w = words[i];
-      if (_wakeSet.contains(w) ||
-          w.startsWith('kadastr') ||
-          w.startsWith('кадастр') ||
-          w.startsWith('cadastre') ||
-          _wakeFuzzy(w)) {
+      if (_wakeSet.contains(w) || _wakePrefix(w) || _wakeFuzzy(w)) {
         wi = i;
         break;
       }
     }
     if (wi < 0) return null;
-    // "Kadastr AI" ikki so'z — ism DAVOMI ('ai/ey/аи') ham tashlanadi,
-    // aks holda "Kadastr AI" wake-only o'rniga content='ai' bo'lib qolardi
+    // "Alomat xon" ikki so'z bo'lib eshitilsa — DAVOMI ('xon/hon/xan') ham tashlanadi.
     var j = wi + 1;
-    const tail = {'ai', 'ay', 'ey', 'eyi', 'ei', 'аи', 'ай', 'ии'};
+    const tail = {'xon', 'hon', 'xan', 'han', 'xona', 'хон', 'хан'};
     while (j < words.length && tail.contains(words[j])) {
       j++;
     }
