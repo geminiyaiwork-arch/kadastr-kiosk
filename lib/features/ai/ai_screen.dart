@@ -285,9 +285,9 @@ class _AiScreenState extends ConsumerState<AiScreen> {
                           : null,
                     ),
                     child: Builder(builder: (context) {
-                      // MULOQAT javobida (salom/persona) LAB-SINXRON video (video_player_win =
-                      // WMF, SAC-xavfsiz). Video faol bo'lsa — o'ynaydi; aks holda STATIK rasm.
-                      final vc = ap.controller;
+                      // GAPIRGANDA: LAB-SINXRON video (Wav2Lip). JIMда: ko'z-pirpirash idle-video
+                      // (server rasmdan avto-yasagan) loop; u ham bo'lmasa STATIK rasm.
+                      final vc = ap.controller ?? ap.idleController;
                       if (vc != null && vc.value.isInitialized) {
                         final vs = vc.value.size;
                         return FittedBox(

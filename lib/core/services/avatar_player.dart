@@ -23,11 +23,13 @@ class AvatarPlayerState {
   final bool idleReady;
   final int session;
   final WinVideoPlayerController? controller;
+  final WinVideoPlayerController? idleController; // jim-holat ko'z-pirpirash loop
   const AvatarPlayerState({
     this.speaking = false,
     this.idleReady = false,
     this.session = 0,
     this.controller,
+    this.idleController,
   });
 
   AvatarPlayerState copyWith({
@@ -35,13 +37,16 @@ class AvatarPlayerState {
     bool? idleReady,
     int? session,
     WinVideoPlayerController? controller,
+    WinVideoPlayerController? idleController,
     bool clearController = false,
+    bool clearIdle = false,
   }) =>
       AvatarPlayerState(
         speaking: speaking ?? this.speaking,
         idleReady: idleReady ?? this.idleReady,
         session: session ?? this.session,
         controller: clearController ? null : (controller ?? this.controller),
+        idleController: clearIdle ? null : (idleController ?? this.idleController),
       );
 }
 
@@ -56,7 +61,59 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
   /// Video faqat Windows kioskда (video_player_win = Windows Media Foundation).
   static bool get supported => Platform.isWindows;
 
-  Future<void> ensureIdle(dynamic av) async {}
+  int _idleTs = -1;
+  bool _idleBusy = false;
+
+  /// JIM-HOLAT ko'z-pirpirash idle-VIDEOSINI (server rasmdan avto-yasagan) yuklab, LOOP
+  /// qiladi (ovozsiz). Bir marta tayyorlanadi; admin yangi avatar qo'ysa (idleVideoTs
+  /// o'zgarsa) qayta yuklanadi. Windows'dan tashqarida no-op.
+  Future<void> ensureIdle(dynamic av) async {
+    if (!Platform.isWindows || av == null) return;
+    final String idleVideo = (av.idleVideo ?? '').toString();
+    final int ts = (av.idleVideoTs ?? 0) as int;
+    if (idleVideo.isEmpty) return;
+    if (state.idleController != null && _idleTs == ts) return; // allaqachon tayyor
+    if (_idleBusy) return;
+    _idleBusy = true;
+    WinVideoPlayerController? c;
+    try {
+      final dir = await _dir();
+      final f = File('${dir.path}${Platform.pathSeparator}idle_$ts.mp4');
+      if (!await f.exists() || (await f.length()) < 1000) {
+        final resp = await _dio.get<List<int>>(
+          '${Env.apiBase}/avatar/idle-video',
+          options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 30)),
+        );
+        final bytes = resp.data ?? const <int>[];
+        if (bytes.length < 1000) return;
+        final tmp = File('${f.path}.tmp');
+        await tmp.writeAsBytes(bytes, flush: true);
+        try {
+          await tmp.rename(f.path);
+        } catch (_) {}
+      }
+      final playFile = await f.exists() ? f : File('${f.path}.tmp');
+      c = WinVideoPlayerController.file(playFile);
+      await c.initialize().timeout(const Duration(seconds: 8));
+      if (!c.value.isInitialized) {
+        try { await c.dispose(); } catch (_) {}
+        return;
+      }
+      await c.setLooping(true);
+      await c.setVolume(0); // jim-holat — ovozsiz
+      if (!state.speaking) await c.play(); // gapirmayotgan bo'lsa darhol o'ynatamiz
+      final old = state.idleController;
+      _idleTs = ts;
+      state = state.copyWith(idleController: c, idleReady: true);
+      if (old != null) { try { await old.dispose(); } catch (_) {} }
+      c = null; // state egalik qiladi — finally dispose qilmasin
+    } catch (_) {
+      // xato — jimда statik rasm qoladi (regress yo'q)
+    } finally {
+      if (c != null) { try { await c.dispose(); } catch (_) {} }
+      _idleBusy = false;
+    }
+  }
 
   /// JORIY o'ynayotgan avatar-videoni DARHOL to'xtatadi (foydalanuvchi yangi savol
   /// bersa/mikrofon bossa — ovoz ustma-ust tushmasin, burchakда eski video qolmasin).
@@ -74,6 +131,11 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
     if (c != null || state.speaking) {
       state = state.copyWith(speaking: false, clearController: true);
     }
+    // Jim-holat ko'z-pirpirash loop qaytadi (gapirish to'xtadi).
+    try {
+      final ic = state.idleController;
+      if (ic != null && ic.value.isInitialized && !ic.value.isPlaying) await ic.play();
+    } catch (_) {}
   }
 
   // FNV-1a 32-bit — BARQAROR kesh-fayl nomi (String.hashCode run'lar aro kafolatlanmagan,
@@ -149,6 +211,7 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
         return c.value.isInitialized; // eskirgan bo'lsa "bajarildi" deb hisoblaymiz
       }
       await c.setVolume(1.0);
+      try { await state.idleController?.pause(); } catch (_) {} // gapirganda idle loop pauza
       state = state.copyWith(speaking: true, controller: c, session: state.session + 1);
       await c.play();
 
@@ -187,7 +250,20 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
       try {
         await c?.dispose();
       } catch (_) {}
+      // Gapirib bo'lgach jim-holat ko'z-pirpirash loop QAYTADI (agar boshqa savol kelmagan bo'lsa).
+      if (mySeq == _seq && !state.speaking) {
+        try {
+          final ic = state.idleController;
+          if (ic != null && ic.value.isInitialized && !ic.value.isPlaying) await ic.play();
+        } catch (_) {}
+      }
     }
+  }
+
+  @override
+  void dispose() {
+    try { state.idleController?.dispose(); } catch (_) {}
+    super.dispose();
   }
 }
 
