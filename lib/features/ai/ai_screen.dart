@@ -11,14 +11,18 @@ import '../../core/network/api_client.dart';
 import '../../core/network/repository.dart';
 import '../../core/services/avatar_player.dart';
 import '../../core/theme/icons.dart';
+import '../../core/theme/tokens.dart';
 import '../../core/util/fmt.dart';
 import 'voice_controller.dart';
 
-/// AI sahifa — MOCKUP 1:1 (2026-07-28): och fon, salomlashuv kartasi + yuqori-o'ngda
-/// dumaloq avatar (yashil onlayn nuqta, gapirganda video shu doirada), qidiruv,
-/// "Kadastr xizmatlari" ro'yxati (real /stats + /xatlov937 raqamlari), pastda katta
-/// mikrofon + "Javob beryapman..." status pilli. Javob kelganda xizmatlar o'rnida
-/// javob matni (olov + indigo raqamlar) va jadval qatorlari chiqadi.
+/// AI sahifa — IKKI HOLAT (user spec 2026-07-28):
+///  1) KIRGANDA / persona-suhbatda: ESKI ko'rinish — qora fon, TO'LIQ EKRAN avatar,
+///     salomlashuv Wav2Lip lab-sinx VIDEO bilan (mockup bu bosqichda YO'Q).
+///  2) MA'LUMOTLI JAVOB berganda: MOCKUP 1:1 — och fon, yuqorida JAVOB MATNI kartasi
+///     (raqamlar indigo-bold) + yuqori-o'ngda DUMALOQ avatar (yashil nuqta), qidiruv,
+///     "Kadastr xizmatlari" ro'yxati (javob JADVALI shu uslubda; jadvalsiz — 5 real
+///     xizmat karta /stats + /xatlov937), pastda katta halo-mikrofon + "Javob
+///     beryapman…" pilli + '...' (suhbatni tozalash → to'liq-ekran avatarga qaytadi).
 class AiScreen extends ConsumerStatefulWidget {
   const AiScreen({super.key});
   @override
@@ -28,9 +32,12 @@ class AiScreen extends ConsumerStatefulWidget {
 class _AiScreenState extends ConsumerState<AiScreen> {
   static const _bg = Color(0xFFEEF1FA);
   static const _ink = Color(0xFF232A4D);
-  static const _slate = Color(0xFF6C7395);
   static const _indigo = Color(0xFF5457F5);
   static const _hintCol = Color(0xFFAAB0D0);
+
+  // Burchakka chiqish spin'i FAQAT OLDINGA aylansin: har chiqishda +1 tur.
+  bool _wasCorner = false;
+  int _spins = 0;
 
   // AI "yuklanmoqda" (foizli warmup) holati
   Map<String, dynamic>? _warmup;
@@ -53,9 +60,10 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final loading = w['loading'] == true;
     ref.read(aiWarmupLoadingProvider.notifier).state = loading;
     setState(() => _warmup = w);
+    // AI HAR DOIM normal ishlaydi + salomlashadi (to'liq ekran video-avatar).
     final t = I18N[ref.read(localeProvider)]!;
     final vc = ref.read(voiceProvider.notifier);
-    vc.resetConversation(); // eski javob/jadval tozalanadi
+    vc.resetConversation(); // eski javob/jadval tozalanadi — avatar to'liq ekranda salomlashadi
     vc.greet(t['aiGreet']);
     if (loading) {
       _warmupPoll = Timer.periodic(const Duration(seconds: 30), (_) => _refreshWarmup());
@@ -97,7 +105,33 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     vc.askAI(s);
   }
 
-  String _statusText(VoiceUiState v, Map<String, dynamic> t) {
+  /// ESKI (qora ekran) status matni — emoji bilan.
+  String _statusOld(VoiceUiState v, Map<String, dynamic> t) {
+    final lang = ref.read(localeProvider);
+    if (v.error == 'mic') return '🎤 ${t['aiMic']}';
+    if (v.recording) {
+      return {
+        'uz': '🔴 Gapiring… (to‘xtatish uchun bosing)',
+        'ru': '🔴 Говорите… (нажмите, чтобы остановить)',
+        'en': '🔴 Speak… (tap to stop)',
+      }[lang]!;
+    }
+    switch (v.phase) {
+      case VoicePhase.thinking:
+        return '⏳ ${t['aiThink']}';
+      case VoicePhase.speaking:
+        return '🔊 ${t['aiSpeaking']}';
+      case VoicePhase.transcribing:
+        return '…';
+      case VoicePhase.listening:
+        return v.heard.isEmpty ? '🎤 ${t['aiListening']}' : '🎤 «${v.heard}»';
+      case VoicePhase.off:
+        return '🎤 ${t['aiTapTalk']}';
+    }
+  }
+
+  /// MOCKUP (och ekran) status matni — emojisiz (yonida to'lqin ikonkasi bor).
+  String _statusNew(VoiceUiState v, Map<String, dynamic> t) {
     final lang = ref.read(localeProvider);
     if (v.error == 'mic') return t['aiMic'];
     if (v.recording) {
@@ -123,7 +157,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
 
   String _cell(dynamic v) {
     final s = '$v';
-    final n = num.tryParse(s.replaceAll(RegExp(r'[\s ]'), ''));
+    final n = num.tryParse(s.replaceAll(RegExp(r'[\s ]'), ''));
     return n != null ? fmt(n) : s;
   }
 
@@ -132,7 +166,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final base = TextStyle(fontSize: fs, fontWeight: FontWeight.w600, color: _ink, height: 1.45);
     final numS = TextStyle(fontSize: fs, fontWeight: FontWeight.w800, color: _indigo, height: 1.45);
     final out = <TextSpan>[];
-    final re = RegExp(r'\d[\d\s ]*\d|\d');
+    final re = RegExp(r'\d[\d\s ]*\d|\d');
     var last = 0;
     for (final m in re.allMatches(t)) {
       if (m.start > last) out.add(TextSpan(text: t.substring(last, m.start), style: base));
@@ -158,6 +192,9 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     return (Icons.apartment_rounded, const Color(0xFFE7ECFE), const Color(0xFF3B5BFE));
   }
 
+  static const _fx = Duration(milliseconds: 520);
+  static const _fxCurve = Curves.easeInOutCubic;
+
   @override
   Widget build(BuildContext context) {
     final t = ref.watch(trProvider);
@@ -165,10 +202,8 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final avatar = ref.watch(avatarProvider).valueOrNull;
     final enabled = avatar?.enabled ?? false;
     final url = enabled ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}' : null;
+    // JIM-HOLAT imo-ishora videosi tayyorlansin (Windows; bir marta yuklanadi)
     if (enabled) ref.read(avatarPlayerProvider.notifier).ensureIdle(avatar);
-    final ap = ref.watch(avatarPlayerProvider);
-    final stats = ref.watch(statsProvider).valueOrNull;
-    final xat = ref.watch(xatlov937Provider).valueOrNull;
     final hasData = v.answer.isNotEmpty;
 
     // Yangi javob kelsa qidiruv tozalanadi (eski filtr yopishib qolmasin)
@@ -176,7 +211,194 @@ class _AiScreenState extends ConsumerState<AiScreen> {
       if (prev != next && mounted) setState(_clearSearch);
     });
 
-    // Xizmat kartalari — REAL raqamlar (/stats + /xatlov937 total c9/c10/c16)
+    return AnimatedContainer(
+      duration: _fx,
+      color: hasData ? _bg : T.aiDark, // javobda OCH fon (mockup), aks holda qora avatar-ekran
+      child: LayoutBuilder(builder: (context, c) {
+        final w = c.maxWidth, h = c.maxHeight;
+        // Avatar holatlari:
+        //  javob YO'Q (salomlashuv/persona) -> TO'LIQ EKRAN (video/rasm)
+        //  MA'LUMOTLI javob                 -> yuqori-o'ng DUMALOQ (mockup, yashil nuqta)
+        const corner = 252.0;
+        final ap = ref.watch(avatarPlayerProvider);
+        final rect = hasData
+            ? Rect.fromLTWH(w - corner - 36, 100, corner, corner)
+            : Rect.fromLTWH(0, 0, w, h);
+        final cornerNow = hasData;
+        if (cornerNow && !_wasCorner) _spins++; // burchakka chiqishda bir tur oldinga
+        _wasCorner = cornerNow;
+        return Stack(
+          children: [
+            // ======= AVATAR (bitta widget, to'liq ekran <-> doira ANIMATSIYA) =======
+            AnimatedPositioned(
+              duration: _fx,
+              curve: _fxCurve,
+              left: rect.left,
+              top: rect.top,
+              width: rect.width,
+              height: rect.height,
+              child: AnimatedRotation(
+                turns: _spins.toDouble(),
+                duration: _fx,
+                curve: _fxCurve,
+                child: Stack(fit: StackFit.expand, clipBehavior: Clip.none, children: [
+                  AnimatedContainer(
+                    duration: _fx,
+                    curve: _fxCurve,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E1E1E),
+                      borderRadius: BorderRadius.circular(hasData ? corner / 2 : 0),
+                      border: hasData
+                          ? Border.all(color: v.speaking ? _indigo : Colors.white, width: 6)
+                          : null,
+                      boxShadow: v.speaking
+                          ? [const BoxShadow(color: Color(0x732F6FE3), blurRadius: 46, spreadRadius: 6)]
+                          : (hasData
+                              ? [const BoxShadow(color: Color(0x2410266B), blurRadius: 24, offset: Offset(0, 8))]
+                              : null),
+                    ),
+                    child: Builder(builder: (context) {
+                      // MULOQAT javobida (salom/persona) LAB-SINXRON video generatsiya qilinadi
+                      // (video_player_win = WMF, SAC-xavfsiz). Video faol bo'lsa — o'ynaydi;
+                      // aks holda STATIK avatar rasmi.
+                      final vc = ap.controller;
+                      if (vc != null && vc.value.isInitialized) {
+                        final vs = vc.value.size;
+                        return FittedBox(
+                          fit: BoxFit.cover,
+                          clipBehavior: Clip.hardEdge,
+                          child: SizedBox(
+                            width: vs.width <= 0 ? 720 : vs.width,
+                            height: vs.height <= 0 ? 1280 : vs.height,
+                            child: WinVideoPlayer(vc),
+                          ),
+                        );
+                      }
+                      return (enabled && url != null)
+                          ? Image.network(url,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white)))
+                          : Center(child: kIcon('ai', size: hasData ? 100 : 220, color: Colors.white));
+                    }),
+                  ),
+                  if (hasData)
+                    Positioned(
+                      right: 8,
+                      bottom: 8,
+                      child: Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF22C55E),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 6),
+                        ),
+                      ),
+                    ),
+                ]),
+              ),
+            ),
+
+            // ======= ESKI QORA-EKRAN boshqaruvlari (salomlashuv/persona holati) =======
+            // exit pill — pastki-chap
+            if (!hasData)
+              Positioned(
+                bottom: 44,
+                left: 36,
+                child: GestureDetector(
+                  onTap: () => context.go('/'),
+                  child: Container(
+                    width: 84,
+                    height: 84,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: const Color(0xEBFFFFFF),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: const [BoxShadow(color: Color(0x38000000), offset: Offset(0, 6), blurRadius: 20)],
+                    ),
+                    child: const Text('‹', style: TextStyle(fontSize: 46, fontWeight: FontWeight.w800, color: T.navy)),
+                  ),
+                ),
+              ),
+            if (!hasData)
+              Positioned(
+                bottom: 170,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: GestureDetector(
+                    onTap: () => ref.read(voiceProvider.notifier).toggleTalk(),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: v.recording ? 172 : 150,
+                      height: v.recording ? 172 : 150,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: v.recording ? const Color(0xFFE5484D) : _indigo,
+                        boxShadow: [
+                          BoxShadow(
+                            color: v.recording ? const Color(0x66E5484D) : const Color(0x4D5457F5),
+                            blurRadius: 42,
+                            spreadRadius: v.recording ? 14 : 4,
+                          ),
+                        ],
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(v.recording ? Icons.stop_rounded : Icons.mic_rounded, color: Colors.white, size: 78),
+                    ),
+                  ),
+                ),
+              ),
+            if (!hasData)
+              Positioned(
+                bottom: 60,
+                left: 40,
+                right: 40,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xEBFFFFFF),
+                      borderRadius: BorderRadius.circular(44),
+                      boxShadow: const [BoxShadow(color: Color(0x2410266B), offset: Offset(0, 6), blurRadius: 22)],
+                    ),
+                    child: Text(_statusOld(v, t),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w700, color: T.navy)),
+                  ),
+                ),
+              ),
+
+            // ======= MOCKUP 1:1 (faqat MA'LUMOTLI JAVOBDA) =======
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: !hasData,
+                child: AnimatedOpacity(
+                  duration: _fx,
+                  curve: _fxCurve,
+                  opacity: hasData ? 1 : 0,
+                  child: hasData ? _mockupBody(t, v) : const SizedBox.shrink(),
+                ),
+              ),
+            ),
+
+            // WARMUP qatlami — bilinar-bilinmas 0101 + foiz chizig'i
+            if (_isWarmup)
+              Positioned.fill(
+                child: IgnorePointer(child: _WarmupOverlay(progress: _warmupProgress, dark: !hasData)),
+              ),
+          ],
+        );
+      }),
+    );
+  }
+
+  /// MOCKUP tanasi: orqaga + javob-karta + qidiruv + ro'yxat + mikrofon + pill + '...'
+  Widget _mockupBody(Map<String, dynamic> t, VoiceUiState v) {
+    final stats = ref.watch(statsProvider).valueOrNull;
+    final xat = ref.watch(xatlov937Provider).valueOrNull;
     final xt = (xat?['total'] is Map) ? Map<String, dynamic>.from(xat!['total'] as Map) : const <String, dynamic>{};
     int? xn(String k) => (xt[k] is num) ? (xt[k] as num).toInt() : null;
     final services = <_Svc>[
@@ -193,287 +415,213 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     ];
 
     final ql = _q.trim().toLowerCase();
-
-    // Javob jadvali (bo'lsa)
     final allRows = v.table ?? const <List<dynamic>>[];
     final headed = allRows.isNotEmpty &&
         allRows[0].length > 1 &&
-        num.tryParse('${allRows[0][1]}'.replaceAll(RegExp(r'[\s ]'), '')) == null;
+        num.tryParse('${allRows[0][1]}'.replaceAll(RegExp(r'[\s ]'), '')) == null;
     final body = headed ? allRows.sublist(1) : allRows;
+    final hasTable = body.isNotEmpty;
     final rows = ql.isEmpty
         ? body
         : body.where((r) => '${r.isNotEmpty ? r[0] : ''}'.toLowerCase().contains(ql)).toList();
     final svcRows = ql.isEmpty ? services : services.where((s) => s.label.toLowerCase().contains(ql)).toList();
 
-    return Container(
-      color: _bg,
-      child: Stack(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(36, 36, 36, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Orqaga (yuqori-chap, mockup)
-                Row(children: [
-                  _SquareBtn(
-                    onTap: () => context.go('/'),
-                    child: const Icon(Icons.arrow_back_ios_new_rounded, color: _ink, size: 36),
-                  ),
-                ]),
-                const SizedBox(height: 22),
-                // Salomlashuv (yoki javob matni) + dumaloq avatar
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: hasData ? _answerHead(v.answer) : _greeting(t)),
-                    const SizedBox(width: 22),
-                    _AvatarCircle(url: url, ap: ap, speaking: v.speaking, fallbackHasImg: enabled),
-                  ],
-                ),
-                const SizedBox(height: 26),
-                // Qidiruv
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 26),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(26),
-                    boxShadow: const [BoxShadow(color: Color(0x1229306B), offset: Offset(0, 5), blurRadius: 18)],
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.search_rounded, color: Color(0xFF9AA1C7), size: 34),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: TextField(
-                          controller: _searchCtrl,
-                          onChanged: (s) => setState(() => _q = s),
-                          onSubmitted: _ask,
-                          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w600, color: _ink),
-                          decoration: InputDecoration(
-                            isCollapsed: true,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 30),
-                            border: InputBorder.none,
-                            hintText: t['aiSearch'],
-                            hintStyle: const TextStyle(fontSize: 27, fontWeight: FontWeight.w500, color: _hintCol),
-                          ),
+    final fs = v.answer.length > 220 ? 27.0 : 31.0;
+
+    return Stack(children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(36, 36, 36, 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Orqaga (yuqori-chap, mockup)
+            Row(children: [
+              _SquareBtn(
+                onTap: () => context.go('/'),
+                child: const Icon(Icons.arrow_back_ios_new_rounded, color: _ink, size: 36),
+              ),
+            ]),
+            const SizedBox(height: 22),
+            // JAVOB MATNI kartasi — o'ng tomonda avatar doirasi uchun joy qoldiradi.
+            // Min balandlik: qidiruv paneli avatar doirasi (past chekkasi ~352) ostidan boshlansin.
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 226),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 430),
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(28, 26, 28, 26),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(28),
+                          boxShadow: const [BoxShadow(color: Color(0x1229306B), offset: Offset(0, 6), blurRadius: 20)],
+                        ),
+                        child: SingleChildScrollView(
+                          child: RichText(text: TextSpan(children: _rich(v.answer, fs))),
                         ),
                       ),
-                      GestureDetector(
-                        onTap: _q.isEmpty ? null : () => setState(_clearSearch),
-                        child: Icon(_q.isEmpty ? Icons.tune_rounded : Icons.close_rounded,
-                            color: const Color(0xFF9AA1C7), size: 32),
+                    ),
+                  ),
+                  const SizedBox(width: 274), // avatar doirasi joyi (Stack ustida chiziladi)
+                ],
+              ),
+            ),
+            const SizedBox(height: 26),
+            // Qidiruv (mockup)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 26),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(26),
+                boxShadow: const [BoxShadow(color: Color(0x1229306B), offset: Offset(0, 5), blurRadius: 18)],
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.search_rounded, color: Color(0xFF9AA1C7), size: 34),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: TextField(
+                      controller: _searchCtrl,
+                      onChanged: (s) => setState(() => _q = s),
+                      onSubmitted: _ask,
+                      style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w600, color: _ink),
+                      decoration: InputDecoration(
+                        isCollapsed: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 30),
+                        border: InputBorder.none,
+                        hintText: t['aiSearch'],
+                        hintStyle: const TextStyle(fontSize: 27, fontWeight: FontWeight.w500, color: _hintCol),
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: _q.isEmpty ? null : () => setState(_clearSearch),
+                    child: Icon(_q.isEmpty ? Icons.tune_rounded : Icons.close_rounded,
+                        color: const Color(0xFF9AA1C7), size: 32),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 26),
+            Text(t['aiServices'],
+                style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800, color: _ink)),
+            const SizedBox(height: 16),
+            // Ro'yxat: javob JADVALI (bo'lsa) — mockup karta-uslubida; bo'lmasa 5 xizmat karta
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 470),
+                children: hasTable
+                    ? [
+                        if (rows.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 40),
+                            child: Center(
+                              child: Text('Topilmadi',
+                                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600, color: Color(0xFF9AA1C7))),
+                            ),
+                          ),
+                        for (final r in rows) _tableRow(r),
+                      ]
+                    : [for (final s in svcRows) _svcRow(s)],
+              ),
+            ),
+          ],
+        ),
+      ),
+      // Katta mikrofon (pastki markaz) — halo bilan
+      Positioned(
+        bottom: 200,
+        left: 0,
+        right: 0,
+        child: Center(
+          child: GestureDetector(
+            onTap: () => ref.read(voiceProvider.notifier).toggleTalk(),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: v.recording ? 268 : 252,
+              height: v.recording ? 268 : 252,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: (v.recording ? const Color(0xFFE5484D) : _indigo).withOpacity(0.10),
+              ),
+              alignment: Alignment.center,
+              child: Container(
+                width: 208,
+                height: 208,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: (v.recording ? const Color(0xFFE5484D) : _indigo).withOpacity(0.16),
+                ),
+                alignment: Alignment.center,
+                child: Container(
+                  width: 164,
+                  height: 164,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: v.recording ? const Color(0xFFE5484D) : _indigo,
+                    boxShadow: [
+                      BoxShadow(
+                        color: v.recording ? const Color(0x66E5484D) : const Color(0x4D5457F5),
+                        blurRadius: 38,
+                        spreadRadius: 4,
                       ),
                     ],
                   ),
+                  child: Icon(v.recording ? Icons.stop_rounded : Icons.mic_rounded, color: Colors.white, size: 82),
                 ),
-                const SizedBox(height: 26),
-                // Bo'lim sarlavhasi
-                Text(hasData ? t['aiResults'] : t['aiServices'],
-                    style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800, color: _ink)),
-                const SizedBox(height: 16),
-                // Ro'yxat — xizmatlar (bosh holat) yoki javob jadvali
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.only(bottom: 470),
-                    children: hasData
-                        ? [
-                            if (rows.isEmpty && body.isNotEmpty)
-                              const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 40),
-                                child: Center(
-                                  child: Text('Topilmadi',
-                                      style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600, color: Color(0xFF9AA1C7))),
-                                ),
-                              ),
-                            for (final r in rows) _tableRow(r),
-                          ]
-                        : [for (final s in svcRows) _svcRow(s)],
-                  ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      // "..." (pastki-chap) — suhbatni tozalaydi -> to'liq-ekran avatarga qaytadi
+      Positioned(
+        bottom: 64,
+        left: 36,
+        child: _SquareBtn(
+          onTap: () {
+            final vc = ref.read(voiceProvider.notifier);
+            vc.stopSpeaking();
+            vc.resetConversation();
+            setState(_clearSearch);
+          },
+          child: const Icon(Icons.more_horiz_rounded, color: _ink, size: 40),
+        ),
+      ),
+      // Status pill (pastki markaz) — to'lqin ikonkasi + holat matni
+      Positioned(
+        bottom: 64,
+        left: 150,
+        right: 150,
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(46),
+              boxShadow: const [BoxShadow(color: Color(0x2410266B), offset: Offset(0, 6), blurRadius: 22)],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.graphic_eq_rounded,
+                    color: v.recording ? const Color(0xFFE5484D) : _indigo, size: 36),
+                const SizedBox(width: 14),
+                Flexible(
+                  child: Text(_statusNew(v, t),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w700, color: _ink)),
                 ),
               ],
             ),
           ),
-          // Katta mikrofon (pastki markaz) — halo bilan
-          Positioned(
-            bottom: 200,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: GestureDetector(
-                onTap: () => ref.read(voiceProvider.notifier).toggleTalk(),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: v.recording ? 268 : 252,
-                  height: v.recording ? 268 : 252,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: (v.recording ? const Color(0xFFE5484D) : _indigo).withOpacity(0.10),
-                  ),
-                  alignment: Alignment.center,
-                  child: Container(
-                    width: 208,
-                    height: 208,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: (v.recording ? const Color(0xFFE5484D) : _indigo).withOpacity(0.16),
-                    ),
-                    alignment: Alignment.center,
-                    child: Container(
-                      width: 164,
-                      height: 164,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: v.recording ? const Color(0xFFE5484D) : _indigo,
-                        boxShadow: [
-                          BoxShadow(
-                            color: v.recording ? const Color(0x66E5484D) : const Color(0x4D5457F5),
-                            blurRadius: 38,
-                            spreadRadius: 4,
-                          ),
-                        ],
-                      ),
-                      child: Icon(v.recording ? Icons.stop_rounded : Icons.mic_rounded,
-                          color: Colors.white, size: 82),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // "..." tugmasi (pastki-chap, mockup) — suhbatni tozalaydi/ovoz to'xtatadi
-          Positioned(
-            bottom: 64,
-            left: 36,
-            child: _SquareBtn(
-              onTap: () {
-                final vc = ref.read(voiceProvider.notifier);
-                vc.stopSpeaking();
-                vc.resetConversation();
-                setState(_clearSearch);
-              },
-              child: const Icon(Icons.more_horiz_rounded, color: _ink, size: 40),
-            ),
-          ),
-          // Status pill (pastki markaz) — to'lqin ikonkasi + holat matni
-          Positioned(
-            bottom: 64,
-            left: 150,
-            right: 150,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(46),
-                  boxShadow: const [BoxShadow(color: Color(0x2410266B), offset: Offset(0, 6), blurRadius: 22)],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.graphic_eq_rounded,
-                        color: v.recording ? const Color(0xFFE5484D) : _indigo, size: 36),
-                    const SizedBox(width: 14),
-                    Flexible(
-                      child: Text(_statusText(v, t),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w700, color: _ink)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (_isWarmup)
-            Positioned.fill(
-              child: IgnorePointer(child: _WarmupOverlay(progress: _warmupProgress, dark: false)),
-            ),
-        ],
-      ),
-    );
-  }
-
-  /// Salomlashuv bloki (mockup): sarlavha kartasi + savol kartasi.
-  Widget _greeting(Map<String, dynamic> t) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(30, 28, 30, 26),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(28),
-            boxShadow: const [BoxShadow(color: Color(0x1229306B), offset: Offset(0, 6), blurRadius: 20)],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(t['aiHello'], style: const TextStyle(fontSize: 46, fontWeight: FontWeight.w800, color: _ink)),
-              const SizedBox(height: 10),
-              Text(t['aiIntro'],
-                  style: const TextStyle(fontSize: 29, fontWeight: FontWeight.w500, color: _slate, height: 1.35)),
-              const SizedBox(height: 18),
-              Container(
-                width: 64,
-                height: 7,
-                decoration: BoxDecoration(
-                  color: _indigo.withOpacity(0.25),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 26),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(28),
-            boxShadow: const [BoxShadow(color: Color(0x0F29306B), offset: Offset(0, 5), blurRadius: 16)],
-          ),
-          child: Text(t['aiAsk'],
-              style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w600, color: _ink, height: 1.4)),
-        ),
-      ],
-    );
-  }
-
-  /// Javob matni (olov ikonkasi + indigo raqamlar) — salomlashuv o'rnida chiqadi.
-  Widget _answerHead(String text) {
-    final fs = text.length > 220 ? 27.0 : 31.0;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 430),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(26, 24, 26, 24),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(28),
-          boxShadow: const [BoxShadow(color: Color(0x1229306B), offset: Offset(0, 6), blurRadius: 20)],
-        ),
-        child: SingleChildScrollView(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 3),
-                child: ShaderMask(
-                  shaderCallback: (r) => const LinearGradient(
-                    colors: [Color(0xFF4B7BFF), Color(0xFF7C5CFC)],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ).createShader(r),
-                  child: const Icon(Icons.local_fire_department_rounded, color: Colors.white, size: 40),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(child: RichText(text: TextSpan(children: _rich(text, fs)))),
-            ],
-          ),
         ),
       ),
-    );
+    ]);
   }
 
   /// Xizmat kartasi (mockup): ikonka-plitka + nom + rangli son-chip + chevron.
@@ -588,76 +736,6 @@ class _SquareBtn extends StatelessWidget {
           boxShadow: const [BoxShadow(color: Color(0x1F10266B), offset: Offset(0, 6), blurRadius: 18)],
         ),
         child: child,
-      ),
-    );
-  }
-}
-
-/// Yuqori-o'ng dumaloq avatar: jim = rasm, gapirganda = lab-sinx video SHU doirada,
-/// pastki-o'ngda yashil onlayn nuqta (mockup 1:1).
-class _AvatarCircle extends ConsumerWidget {
-  const _AvatarCircle({required this.url, required this.ap, required this.speaking, required this.fallbackHasImg});
-  final String? url;
-  final AvatarPlayerState ap;
-  final bool speaking;
-  final bool fallbackHasImg;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    const d = 252.0;
-    final vc = ap.controller;
-    final hasVideo = vc != null && vc.value.isInitialized;
-    return SizedBox(
-      width: d + 8,
-      height: d + 8,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            width: d,
-            height: d,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFFDDE3F5),
-              border: Border.all(color: speaking ? const Color(0xFF5457F5) : Colors.white, width: 6),
-              boxShadow: speaking
-                  ? [const BoxShadow(color: Color(0x595457F5), blurRadius: 36, spreadRadius: 4)]
-                  : [const BoxShadow(color: Color(0x2410266B), offset: Offset(0, 8), blurRadius: 24)],
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: hasVideo
-                ? FittedBox(
-                    fit: BoxFit.cover,
-                    clipBehavior: Clip.hardEdge,
-                    child: SizedBox(
-                      width: vc.value.size.width <= 0 ? 720 : vc.value.size.width,
-                      height: vc.value.size.height <= 0 ? 1280 : vc.value.size.height,
-                      child: WinVideoPlayer(vc),
-                    ),
-                  )
-                : (url != null
-                    ? Image.network(url!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            Center(child: kIcon('ai', size: 110, color: const Color(0xFF8A93BF))))
-                    : Center(child: kIcon('ai', size: 110, color: const Color(0xFF8A93BF)))),
-          ),
-          // Onlayn nuqta
-          Positioned(
-            right: 6,
-            bottom: 6,
-            child: Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                color: const Color(0xFF22C55E),
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 6),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
