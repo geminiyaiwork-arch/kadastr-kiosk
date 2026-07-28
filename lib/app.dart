@@ -8,6 +8,7 @@ import 'core/theme/app_theme.dart';
 import 'core/theme/tokens.dart';
 import 'features/ai/ambient_voice_host.dart';
 import 'router.dart';
+import 'shell/face_watch_host.dart';
 import 'shell/idle_attract_host.dart';
 import 'shell/virtual_keyboard.dart';
 
@@ -25,7 +26,9 @@ class KioskApp extends ConsumerWidget {
       builder: (context, child) => HeartbeatHost(
         child: UpdateHost(
           child: AmbientVoiceHost(
-            child: IdleAttractHost(child: _Canvas(child: child ?? const SizedBox())),
+            child: FaceWatchHost(
+              child: IdleAttractHost(child: _Canvas(child: child ?? const SizedBox())),
+            ),
           ),
         ),
       ),

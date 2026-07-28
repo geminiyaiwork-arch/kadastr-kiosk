@@ -85,6 +85,30 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   // soxta "kadastr" wake bermasin (aks holda bo'sh turганда o'zidan AI'ga kirib ketardi,
   // zastavka chiqmasdi). Shu vaqtgacha ambient tinglash O'CHIQ.
   DateTime _quietUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  // EXO-FILTR (1.9.36): AI o'z aytgan gapining BO'LAGINI qayta eshitsa (uzun javobda
+  // sukut oynasi yetmaydi — jonli logда "…yordamchisi kadastr kai bolaman" acted:true
+  // bo'lgan) — savol deb QABUL QILMAYDI. Bu "sekin javob / navbat band" muammosining
+  // asosiy sababi edi: AI o'ziga o'zi javob berishga urinardi.
+  String _lastSpokenNorm = '';
+
+  String _normTxt(String s) => s
+      .toLowerCase()
+      .replaceAll(RegExp(r"['’ʻʼ`.,!?:;()\-—]"), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  /// Eshitilgan matn AI'ning oxirgi aytgan gapining bo'lagi (aks-sado)mi?
+  bool _isEcho(String text) {
+    if (_lastSpokenNorm.isEmpty) return false;
+    final a = _normTxt(text);
+    if (a.length < 8) return false;
+    if (_lastSpokenNorm.contains(a)) return true; // bo'lak aynan aytilgan gap ichida
+    final aw = a.split(' ').where((w) => w.length > 2).toList();
+    if (aw.length < 3) return false;
+    final bw = _lastSpokenNorm.split(' ').toSet();
+    final hit = aw.where(bw.contains).length;
+    return hit / aw.length >= 0.6; // so'zlarning 60%+ mos — aks-sado
+  }
 
   bool Function()? onAiPage; // direct mode (no wake needed)
   bool Function()? canListen; // false on the appeal page (camera owns the mic)
@@ -238,6 +262,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       _busy = true;
       state = state.copyWith(phase: VoicePhase.transcribing);
       final text = await _stt(path);
+      if (text != null && text.isNotEmpty && _isEcho(text)) {
+        // AI o'z ovozining bo'lagini eshitdi — savol EMAS (navbatni band qilmaydi)
+        _logHeard(text, acted: false);
+        _busy = false;
+        continue;
+      }
       if (text != null && text.isNotEmpty && _valid(text)) {
         await _handle(text);
       } else if ((onAiPage?.call() ?? false) &&
@@ -420,6 +450,13 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
     _logHeard(text, acted: true);
     ref.read(voiceActivityProvider.notifier).state++; // idle-taymerga "faollik" pulsi
+    // "MENI ESLAB QOL" — yuz-ro'yxat (kamera) ekrani ochiladi (1.9.36)
+    if (_enrollIntent(content)) {
+      await stopSpeaking();
+      navTo?.call('/face-enroll');
+      _busy = false;
+      return;
+    }
     // 1) OVOZLI SAHIFA-NAVIGATSIYA — sahifaga JIM o'tadi (AI faqat AI sahifasida
     //    gapiradi — boshqa sahifalarda ovozli izoh YO'Q).
     //    AI sahifasida faqat aniq "och/sahifasini och" buyrug'ida o'tadi.
@@ -538,6 +575,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (text != null && text.trim().isNotEmpty) {
       state = state.copyWith(heard: text.trim());
       _logHeard(text.trim());
+      // "MENI ESLAB QOL" — tugma orqali ham ishlaydi
+      if (_enrollIntent(text.trim())) {
+        navTo?.call('/face-enroll');
+        _busy = false;
+        return;
+      }
       // Tugma AI sahifasida — navigatsiya FAQAT aniq "och" buyrug'ida (JIM o'tadi);
       // aks holda AI javob beradi. Tugma orqali ISM shart emas.
       final route = _matchRoute(text.trim());
@@ -619,6 +662,22 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         'en': 'I am listening, ask your question.',
       }[_lang]!;
 
+  /// "Meni eslab qol" — yuzni ro'yxatga olish niyati (kamera + ism so'rash).
+  bool _enrollIntent(String text) {
+    final t = text.toLowerCase().replaceAll(RegExp(r"['’ʻʼ`]"), '');
+    return RegExp(r'(meni|мени|мене)\s*(eslab|yodda|esda|yodingda|esingda)\s*(qol|saqla|tut)'
+            r'|(eslab|yodda|esda)\s*(qol|saqla)\b.*(meni|мени)'
+            r'|запомни\s*меня|remember\s*me')
+        .hasMatch(t);
+  }
+
+  /// Fon yuz-tanish salomlashuvi kabi QISQA matnni ovozda aytish (video'siz, tashqi API).
+  Future<void> speakText(String text) async {
+    if (_busy) return;
+    _busy = true;
+    await _speak(text, video: false);
+  }
+
   /// Ism bilan chaqirilganda (savolsiz) — "Labbay, eshitaman!" deb javob beradi.
   String _labbay() => {
         'uz': 'Hoy, labbay! Eshitaman, savolingizni ayting.',
@@ -640,6 +699,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       _busy = false;
       return;
     }
+    _lastSpokenNorm = _normTxt(clean); // exo-filtr: shu gapning bo'laklari savol emas
     // POYGA-FIX: birinchi salomlashuvda avatar-konfig hali yuklanmagan bo'ladi
     // (ikkalasi bir soniyada boshlanadi) -> null deb video o'tkazib yuborilardi.
     // Qisqa kutamiz — konfig kelsa video, kelmasa oddiy ovoz.
@@ -661,7 +721,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
         if (ok) {
           state = state.copyWith(speaking: false);
-          _quietUntil = DateTime.now().add(const Duration(milliseconds: 2500)); // echo-sukut
+          _quietUntil = DateTime.now().add(const Duration(milliseconds: 3000)); // echo-sukut
           _busy = false;
           return;
         }
@@ -697,7 +757,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       print('[tts] play xato: $e');
     }
     state = state.copyWith(speaking: false);
-    _quietUntil = DateTime.now().add(const Duration(milliseconds: 2500)); // echo-sukut (o'z ovozini eshitmasin)
+    _quietUntil = DateTime.now().add(const Duration(milliseconds: 3000)); // echo-sukut (o'z ovozini eshitmasin)
     _busy = false;
   }
 

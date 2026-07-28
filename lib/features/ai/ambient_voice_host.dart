@@ -30,7 +30,9 @@ class _AmbientVoiceHostState extends ConsumerState<AmbientVoiceHost> {
       // kiosk zastavka videosining ovozini o'zi eshitib o'zini uyg'otmasin.
       // (WARMUP endi mikrofonni BLOKLAMAYDI — AI kirganда darhol ishlaydi, warmup faqat
       //  ustidан bilinar-bilinmas 0101 qatlam; hech nimaga ta'sir qilmaydi.)
-      canListen: () => ref.read(currentRouteProvider) != '/appeal' && !ref.read(attractProvider),
+      canListen: () => ref.read(currentRouteProvider) != '/appeal' &&
+          ref.read(currentRouteProvider) != '/face-enroll' && // ro'yxat ekrani mikrofonni o'zi oladi (ism yozish)
+          !ref.read(attractProvider),
       navToAi: () => ref.read(routerProvider).go('/ai'),
       navTo: (route) => ref.read(routerProvider).go(route),
     );

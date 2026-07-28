@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'features/ai/ai_screen.dart';
 import 'features/appeal/appeal_screen.dart';
+import 'features/face/face_enroll_screen.dart';
 import 'features/districts/districts_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/illegal/illegal_screen.dart';
@@ -65,6 +66,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/illegal', pageBuilder: (_, st) => _fx(st, const IllegalScreen())),
       GoRoute(path: '/appeal', pageBuilder: (_, st) => _fx(st, const AppealScreen())),
       GoRoute(path: '/ai', pageBuilder: (_, st) => _fx(st, const AiScreen())),
+      GoRoute(path: '/face-enroll', pageBuilder: (_, st) => _fx(st, const FaceEnrollScreen())),
     ],
   );
 });
