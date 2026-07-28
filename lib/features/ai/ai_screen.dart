@@ -17,6 +17,7 @@ import '../../core/services/avatar_player.dart';
 import '../../core/theme/icons.dart';
 import '../../core/theme/tokens.dart';
 import '../../core/util/fmt.dart';
+import '../../router.dart';
 import 'voice_controller.dart';
 
 /// AI sahifa — IKKI HOLAT (user spec 2026-07-28):
