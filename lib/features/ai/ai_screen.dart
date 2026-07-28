@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:video_player_win/video_player_win.dart';
 
 import '../../core/env.dart';
@@ -78,13 +81,88 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final loading = w['loading'] == true;
     ref.read(aiWarmupLoadingProvider.notifier).state = loading;
     setState(() => _warmup = w);
-    // AI HAR DOIM normal ishlaydi + salomlashadi (to'liq ekran video-avatar).
     final t = I18N[ref.read(localeProvider)]!;
     final vc = ref.read(voiceProvider.notifier);
-    vc.resetConversation(); // eski javob/jadval tozalanadi — avatar to'liq ekranda salomlashadi
-    vc.greet(t['aiGreet']);
+    vc.resetConversation(); // eski javob/jadval tozalanadi
+    // KIRISH (INTRO) VIDEOSI: admin joriy tilга yuklagan bo'lsa — o'sha video o'ynaydi
+    // (AI GAPIRMAYDI, generatsiya QILMAYDI). Video tugagach mikrofon savolni eshitadi.
+    // Yo'q bo'lsa — hozirgi salomlashuv (Wav2Lip greet).
+    final playedIntro = await _maybePlayIntro();
+    if (!mounted) return;
+    if (!playedIntro) vc.greet(t['aiGreet']);
     if (loading) {
       _warmupPoll = Timer.periodic(const Duration(seconds: 30), (_) => _refreshWarmup());
+    }
+  }
+
+  WinVideoPlayerController? _introCtl;
+
+  /// Admin yuklagan kirish videosini (joriy til) o'ynatadi. true = o'ynadi.
+  Future<bool> _maybePlayIntro() async {
+    if (!Platform.isWindows) return false;
+    final lang = ref.read(localeProvider);
+    int ts = 0;
+    try {
+      final r = await ref.read(dioProvider).get('/intro');
+      final m = Map<String, dynamic>.from(r.data as Map);
+      final rec = m[lang];
+      if (rec is! Map || rec['has'] != true) return false;
+      ts = (rec['ts'] as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return false;
+    }
+    try {
+      // yuklab olib keshlaymiz (takror kirishда qayta yuklamaydi)
+      final base = await getApplicationSupportDirectory();
+      final dir = Directory('${base.path}${Platform.pathSeparator}intro');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final f = File('${dir.path}${Platform.pathSeparator}intro_${lang}_$ts.mp4');
+      if (!await f.exists() || (await f.length()) < 1000) {
+        final resp = await ref.read(dioProvider).get<List<int>>(
+          '/intro',
+          queryParameters: {'lang': lang},
+          options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 60)),
+        );
+        final bytes = resp.data ?? const <int>[];
+        if (bytes.length < 1000) return false;
+        final tmp = File('${f.path}.tmp');
+        await tmp.writeAsBytes(bytes, flush: true);
+        try { await tmp.rename(f.path); } catch (_) {}
+      }
+      final playFile = await f.exists() ? f : File('${f.path}.tmp');
+      final c = WinVideoPlayerController.file(playFile);
+      await c.initialize().timeout(const Duration(seconds: 8));
+      if (!c.value.isInitialized || !mounted) { try { await c.dispose(); } catch (_) {} return false; }
+      // AI ovozi/gapi bo'lmasin — intro paytida mikrofon TINGLAMAYDI (introPlaying)
+      try { await ref.read(voiceProvider.notifier).stopSpeaking(); } catch (_) {}
+      ref.read(introPlayingProvider.notifier).state = true;
+      ref.read(kioskBusyProvider.notifier).state++; // idle-reset urmasin
+      await c.setVolume(1.0);
+      setState(() => _introCtl = c);
+      await c.play();
+      // tugashini kutamiz
+      final done = Completer<void>();
+      void listener() {
+        final v = c.value;
+        if (!v.isInitialized) return;
+        final d = v.duration;
+        final ended = (d.inMilliseconds > 0 && v.position >= d - const Duration(milliseconds: 160)) ||
+            (!v.isPlaying && v.position > const Duration(milliseconds: 400) && v.position >= d - const Duration(milliseconds: 400));
+        if (ended && !done.isCompleted) done.complete();
+      }
+      c.addListener(listener);
+      final capMs = c.value.duration.inMilliseconds > 0 ? c.value.duration.inMilliseconds + 1500 : 60000;
+      await Future.any<void>([done.future, Future<void>.delayed(Duration(milliseconds: capMs.clamp(3000, 120000)))]);
+      c.removeListener(listener);
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      final c = _introCtl;
+      if (mounted) setState(() => _introCtl = null);
+      try { await c?.dispose(); } catch (_) {}
+      try { ref.read(introPlayingProvider.notifier).state = false; } catch (_) {}
+      try { ref.read(kioskBusyProvider.notifier).state--; } catch (_) {}
     }
   }
 
@@ -104,6 +182,8 @@ class _AiScreenState extends ConsumerState<AiScreen> {
   void dispose() {
     _warmupPoll?.cancel();
     ref.read(aiWarmupLoadingProvider.notifier).state = false;
+    try { _introCtl?.dispose(); } catch (_) {}
+    try { ref.read(introPlayingProvider.notifier).state = false; } catch (_) {}
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -400,6 +480,26 @@ class _AiScreenState extends ConsumerState<AiScreen> {
             if (_isWarmup)
               Positioned.fill(
                 child: IgnorePointer(child: _WarmupOverlay(progress: _warmupProgress, dark: !hasData)),
+              ),
+
+            // KIRISH (INTRO) VIDEOSI — eng UST qatlam, to'liq ekran (hamma narsani yopadi).
+            // O'ynаganда AI gapirmaydi, mikrofon tinglamaydi; tugagach yo'qoladi → savol kutadi.
+            if (_introCtl != null && _introCtl!.value.isInitialized)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () {}, // teginish intro'ni o'tkazib yubormasin (to'liq ko'rsin)
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: FittedBox(
+                      fit: BoxFit.contain,
+                      child: SizedBox(
+                        width: _introCtl!.value.size.width <= 0 ? 1080 : _introCtl!.value.size.width,
+                        height: _introCtl!.value.size.height <= 0 ? 1920 : _introCtl!.value.size.height,
+                        child: WinVideoPlayer(_introCtl!),
+                      ),
+                    ),
+                  ),
+                ),
               ),
           ],
         );

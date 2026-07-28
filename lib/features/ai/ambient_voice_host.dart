@@ -32,6 +32,7 @@ class _AmbientVoiceHostState extends ConsumerState<AmbientVoiceHost> {
       //  ustidан bilinar-bilinmas 0101 qatlam; hech nimaga ta'sir qilmaydi.)
       canListen: () => ref.read(currentRouteProvider) != '/appeal' &&
           ref.read(currentRouteProvider) != '/face-enroll' && // ro'yxat ekrani mikrofonni o'zi oladi (ism yozish)
+          !ref.read(introPlayingProvider) && // kirish videosi o'ynayapti — tinglamaymiz
           !ref.read(attractProvider),
       navToAi: () => ref.read(routerProvider).go('/ai'),
       navTo: (route) => ref.read(routerProvider).go(route),
