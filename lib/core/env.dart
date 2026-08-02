@@ -15,7 +15,7 @@ class Env {
   static const heartbeatMs = 60000;
 
   // App version (reported via heartbeat; keep in sync with pubspec).
-  static const appVersion = '1.9.41';
+  static const appVersion = '1.9.42';
 
   // Voice timing + native VAD (dBFS amplitude from `record`; tune on Windows mic)
   static const onsetDb = -38.0; // above this = speech onset
@@ -23,7 +23,7 @@ class Env {
   static const onsetPollMs = 140;
   static const onsetTimeoutMs = 8000;
   static const endPollMs = 100;
-  static const endSilenceMs = 900; // gap tugashi (tezroq javob; avval 1800 = sekin his qilardi)
+  static const endSilenceMs = 750; // gap tugashi (tezroq javob; 900 dan tushirildi — 2026-08-02)
   static const utteranceMaxMs = 22000;
   static const minVoicedMs = 150;
   static const armedMs = 18000;

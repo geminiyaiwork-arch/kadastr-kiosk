@@ -28,6 +28,7 @@ class _FaceWatchHostState extends ConsumerState<FaceWatchHost> {
   bool _busy = false;
   final Map<String, DateTime> _greeted = {}; // ism -> oxirgi salom (10 daq takrorlamaydi)
   DateTime _lastAny = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastUnknown = DateTime.fromMillisecondsSinceEpoch(0); // notanish yuzga salom cooldown
 
   @override
   void initState() {
@@ -87,7 +88,28 @@ class _FaceWatchHostState extends ConsumerState<FaceWatchHost> {
           .read(dioProvider)
           .post('/face/recognize', data: {'image': base64Encode(bytes)});
       final m = Map<String, dynamic>.from(r.data as Map);
-      if (m['match'] != true) return;
+      if (m['match'] != true) {
+        // SALOMLASHISH (2026-08-02, user talabi): NOTANISH odam yaqinlashsa ham salom
+        // beramiz (yuz ko'rindi, lekin ro'yxatda yo'q). 90s cooldown — o'tkinchilarga
+        // qayta-qayta salom bermasin; tanish-yuz salomiga xalaqit qilmaydi.
+        if (m['face'] == true) {
+          final now = DateTime.now();
+          if (now.difference(_lastUnknown).inSeconds < 90) return;
+          if (now.difference(_lastAny).inSeconds < 25) return;
+          final v = ref.read(voiceProvider);
+          if (v.speaking || v.recording || v.phase == VoicePhase.thinking) return;
+          _lastUnknown = now;
+          _lastAny = now;
+          final lang = ref.read(localeProvider);
+          final g = {
+            'uz': 'Assalomu alaykum! Xush kelibsiz! Men Alomat — savolingiz bo‘lsa, «Alomat» deb chaqiring.',
+            'ru': 'Здравствуйте! Добро пожаловать! Я Аломат — если есть вопрос, позовите меня: «Аломат».',
+            'en': 'Hello! Welcome! I am Alomat — if you have a question, just call me: "Alomat".',
+          }[lang]!;
+          unawaited(ref.read(voiceProvider.notifier).speakText(g));
+        }
+        return;
+      }
       final name = (m['name'] ?? '').toString().trim();
       if (name.isEmpty) return;
       final now = DateTime.now();

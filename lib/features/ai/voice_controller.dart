@@ -271,10 +271,22 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       _busy = true;
       state = state.copyWith(phase: VoicePhase.transcribing);
       final text = await _stt(path);
+      if (_lastSttEvent == 'sneeze') {
+        // CHUCHKIRISH aniqlandi (server YAMNet) — odob bilan "Sog' bo'ling!" deymiz
+        await _speak(_blessYou(), video: false);
+        continue;
+      }
       if (text != null && text.isNotEmpty && _isEcho(text)) {
         // AI o'z ovozining bo'lagini eshitdi — savol EMAS (navbatni band qilmaydi)
         _logHeard(text, acted: false);
         _busy = false;
+        continue;
+      }
+      if (text != null && text.isNotEmpty && _valid(text) && _greetIntent(text)) {
+        // SALOMLASHISH (ismsiz ham): odam "Assalomu alaykum" desa — iliq javob beramiz
+        // (faqat qisqa sof-salom ibora; cooldown bilan — TV/shovqin spam qilmasin)
+        _logHeard(text, acted: true);
+        await _speak(_greetReply(), video: false);
         continue;
       }
       if (text != null && text.isNotEmpty && _valid(text)) {
@@ -351,28 +363,38 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     try {
       final bytes = await File(path).readAsBytes();
       if (bytes.length < 4000) return null; // juda qisqa
-      if (_rmsDbfs(bytes) < _rmsMinDbfs) return null; // sukut → STTга yubormaymiz
+      // SUKUT/SHOVQIN-DARVOZA (2026-08-02 kuchaytirildi): autoGain sukut-shovqinni RMS
+      // darvozasidan o'tkazib yuborardi → server har 10s bo'sh STT bilan band bo'lardi.
+      // Endi: RMS + CREST (peak−rms). Nutq dinamik (crest >~9dB), kuchaytirilgan tekis
+      // shovqin yassi (crest 3-6dB) → yuborilmaydi.
+      final mtr = _wavMetrics(bytes);
+      if (mtr.$1 < _rmsMinDbfs) return null; // sukut → STTга yubormaymiz
+      if (mtr.$2 - mtr.$1 < 7.0 && mtr.$1 < -30) return null; // yassi past shovqin (nutq emas)
     } catch (_) {
       return null;
     }
     return path;
   }
 
-  /// WAV (16-bit PCM mono) baytlaridan RMS energiya (dBFS) — platformaga bog'liq emas.
-  double _rmsDbfs(List<int> wav) {
+  /// WAV (16-bit PCM mono) baytlaridan (RMS dBFS, peak dBFS) — platformaga bog'liq emas.
+  (double, double) _wavMetrics(List<int> wav) {
     final n = wav.length;
-    if (n <= 44) return -160;
+    if (n <= 44) return (-160, -160);
     var sum = 0.0;
     var cnt = 0;
+    var peak = 0;
     for (var i = 44; i + 1 < n; i += 2) {
       var s = wav[i] | (wav[i + 1] << 8);
       if (s >= 32768) s -= 65536;
+      final a = s.abs();
+      if (a > peak) peak = a;
       sum += s.toDouble() * s.toDouble();
       cnt++;
     }
-    if (cnt == 0) return -160;
+    if (cnt == 0) return (-160, -160);
     final rms = sqrt(sum / cnt);
-    return 20 * (log(rms / 32768.0 + 1e-9) / ln10);
+    double db(double v) => 20 * (log(v / 32768.0 + 1e-9) / ln10);
+    return (db(rms), db(peak.toDouble()));
   }
 
   Future<void> _stopRec() async {
@@ -381,7 +403,11 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     } catch (_) {}
   }
 
+  /// Oxirgi /stt javobidagi hodisa (masalan 'sneeze' — chuchkirish). _stt ni chaqirgach o'qiladi.
+  String _lastSttEvent = '';
+
   Future<String?> _stt(String path) async {
+    _lastSttEvent = '';
     try {
       final bytes = await File(path).readAsBytes();
       if (bytes.length < 1500) return null;
@@ -393,11 +419,19 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       );
       final m = Map<String, dynamic>.from(r.data as Map);
       if (m['error'] != null) return null;
+      _lastSttEvent = (m['event'] ?? '').toString();
       return (m['text'] ?? '').toString().trim();
     } catch (_) {
       return null;
     }
   }
+
+  /// Chuchkirishga javob — "Sog' bo'ling!" (server YAMNet bilan aniqlaydi, event:'sneeze').
+  String _blessYou() => {
+        'uz': 'Sog‘ bo‘ling!',
+        'ru': 'Будьте здоровы!',
+        'en': 'Bless you!',
+      }[_lang]!;
 
   bool _valid(String text) {
     final s = text.replaceAll(RegExp(r'[.,!?\s\d]'), '');
@@ -582,6 +616,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     final path = _manualPath;
     _manualPath = null;
     final text = (path != null) ? await _stt(path) : null;
+    if (_lastSttEvent == 'sneeze') {
+      await _speak(_blessYou(), video: false);
+      return;
+    }
     if (text != null && text.trim().isNotEmpty) {
       state = state.copyWith(heard: text.trim());
       _logHeard(text.trim());
@@ -672,6 +710,29 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         'en': 'I am listening, ask your question.',
       }[_lang]!;
 
+  // ===== OVOZLI SALOMLASHISH (2026-08-02, user talabi "salomlashsin") =====
+  DateTime _lastVoiceGreet = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Sof salom-ibora (≤4 so'z, savolsiz) — "Assalomu alaykum", "Salom" ...
+  /// Whisper sukutda "Assalomu alaykum" gallyutsinatsiya qilishi mumkin (initial_prompt'da bor)
+  /// → 90s cooldown + exo-filtr bilan cheklangan.
+  bool _greetIntent(String text) {
+    if (DateTime.now().difference(_lastVoiceGreet).inSeconds < 90) return false;
+    final t = _normTxt(text);
+    if (t.split(' ').length > 4) return false;
+    final ok = RegExp(r'^(assalomu?\s*alaykum|assalom|salom\s*alaykum|va\s*alaykum\s*assalom|salom|'
+            r'здравствуйте|привет|добрый\s*(день|вечер|утро)|hello|hi|good\s*(morning|afternoon|evening))\b')
+        .hasMatch(t);
+    if (ok) _lastVoiceGreet = DateTime.now();
+    return ok;
+  }
+
+  String _greetReply() => {
+        'uz': 'Va alaykum assalom! Xush kelibsiz! Men Alomat — savolingiz bo‘lsa, bemalol ayting.',
+        'ru': 'Здравствуйте! Добро пожаловать! Я Аломат — если есть вопрос, спрашивайте.',
+        'en': 'Hello! Welcome! I am Alomat — feel free to ask me anything.',
+      }[_lang]!;
+
   /// "Meni eslab qol" — yuzni ro'yxatga olish niyati (kamera + ism so'rash).
   bool _enrollIntent(String text) {
     final t = text.toLowerCase().replaceAll(RegExp(r"['’ʻʼ`]"), '');
@@ -750,24 +811,35 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     try {
       await ref.read(avatarPlayerProvider.notifier).stop();
     } catch (_) {}
-    final url = '${Env.apiBase}/tts/synthesize?text=${Uri.encodeComponent(clean.substring(0, min(clean.length, 800)))}'
-        '&voice=$voice&lang=$_lang';
+    final sp = clean.substring(0, min(clean.length, 800));
     // ignore: avoid_print
     print('[tts] speak boshlanyapti (${clean.length} belgi)');
     state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
     try {
       await _player.stop();
-      // MUHIM: onPlayerComplete.first.timeout(onTimeout:...) ISHLATILMAYDI —
-      // audioplayers'da runtime tip-xatosi beradi (Future<AudioEvent> vs () => Null)
-      // va ovoz UMUMAN chalinmasdi. Future.any tip-xavfsiz: tugash hodisasi YOKI
-      // matn uzunligiga mos cap-vaqt (800 belgi ≈ 50-70s) — qaysi biri avval.
-      final capSec = 15 + (clean.length ~/ 10);
-      final done = _player.onPlayerComplete.first;
-      await _player.play(UrlSource(url));
-      await Future.any<void>([done, Future<void>.delayed(Duration(seconds: capSec))]);
-      try {
-        await _player.stop();
-      } catch (_) {} // cap'da to'xtatiladi (o'z ovozini eshitmasin)
+      // BOSH-JUMLA + DAVOMI (2026-08-02, tezlik): birinchi jumla QISQA → edge-tts uni ~1s da
+      // sintez qiladi va ovoz DARHOL boshlanadi; davomi u o'ynayotganda FONDA yuklanadi.
+      // (Avval butun 800-belgili matn bitta so'rovda 2-4s, ba'zan 10s+ kutilardi.)
+      // Bo'linish qoidasi server prewarm bilan AYNAN bir xil (server.js) — kesh mos tushadi.
+      String head = sp;
+      String? tail;
+      if (sp.length > 45) {
+        final mm = RegExp(r'''[.!?]["')\]]?\s''').firstMatch(sp.substring(25));
+        if (mm != null) {
+          final cut = 25 + mm.start + mm.group(0)!.length - 1;
+          final h = sp.substring(0, cut).trim(), t = sp.substring(cut).trim();
+          if (h.isNotEmpty && t.length >= 20) {
+            head = h;
+            tail = t;
+          }
+        }
+      }
+      final tailFut = (tail != null) ? _fetchTts(tail, voice) : null; // parallel: davomi fonda
+      await _playTts(await _fetchTts(head, voice), head, voice);
+      if (tailFut != null && state.speaking) {
+        // stopSpeaking bo'lgan bo'lsa (sahifa almashdi) davomini o'ynatmaymiz
+        await _playTts(await tailFut, tail!, voice);
+      }
     } catch (e) {
       // Ovoz chalinmasa sababи konsolда ko'rinsin (jim yutilib ketmasin)
       // ignore: avoid_print
@@ -776,6 +848,49 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     state = state.copyWith(speaking: false);
     _quietUntil = DateTime.now().add(const Duration(milliseconds: 3000)); // echo-sukut (o'z ovozini eshitmasin)
     _busy = false;
+  }
+
+  /// TTS mp3 ni dio (keep-alive) bilan yuklab lokal faylga yozadi — UrlSource'ning har
+  /// safar YANGI TLS ulanishi (+0.7s) yo'qoladi. Xato bo'lsa null (UrlSource fallback).
+  Future<String?> _fetchTts(String text, String voice) async {
+    try {
+      final r = await _dio.get(
+        '/tts/synthesize',
+        queryParameters: {'text': text, 'voice': voice, 'lang': _lang},
+        options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 25)),
+      );
+      final data = r.data as List<int>;
+      if (data.length < 200) return null;
+      final f = File('${Directory.systemTemp.path}/kadastr_tts_${DateTime.now().microsecondsSinceEpoch}.mp3');
+      await f.writeAsBytes(data, flush: true);
+      return f.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Bitta TTS bo'lakni o'ynatadi (lokal fayl, bo'lmasa URL fallback) va tugashini kutadi.
+  Future<void> _playTts(String? filePath, String text, String voice) async {
+    final capSec = 15 + (text.length ~/ 10);
+    // MUHIM: onPlayerComplete.first.timeout(onTimeout:...) ISHLATILMAYDI —
+    // audioplayers'da runtime tip-xatosi beradi va ovoz UMUMAN chalinmasdi.
+    // Future.any tip-xavfsiz: tugash hodisasi YOKI matnга mos cap-vaqt.
+    final done = _player.onPlayerComplete.first;
+    if (filePath != null) {
+      await _player.play(DeviceFileSource(filePath));
+    } else {
+      final url = '${Env.apiBase}/tts/synthesize?text=${Uri.encodeComponent(text)}&voice=$voice&lang=$_lang';
+      await _player.play(UrlSource(url));
+    }
+    await Future.any<void>([done, Future<void>.delayed(Duration(seconds: capSec))]);
+    try {
+      await _player.stop();
+    } catch (_) {} // cap'da to'xtatiladi (o'z ovozini eshitmasin)
+    if (filePath != null) {
+      try {
+        await File(filePath).delete();
+      } catch (_) {}
+    }
   }
 
   void _logHeard(String text, {bool acted = true}) {
