@@ -15,7 +15,9 @@ class Env {
   static const heartbeatMs = 60000;
 
   // App version (reported via heartbeat; keep in sync with pubspec).
-  static const appVersion = '1.9.42';
+  // ⚠️ MUHIM: pubspec.yaml `version:` BILAN BIRGA oshir — aks holda avto-yangilanish
+  // manifestдан «yangi» ko'rib cheksiz qayta-o'rnatadi + admin/versiya-barда eski ko'rinadi.
+  static const appVersion = '1.9.44';
 
   // Voice timing + native VAD (dBFS amplitude from `record`; tune on Windows mic)
   static const onsetDb = -38.0; // above this = speech onset
