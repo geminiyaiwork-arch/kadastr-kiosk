@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/widgets.dart';
@@ -33,7 +34,28 @@ class _FaceWatchHostState extends ConsumerState<FaceWatchHost> {
   @override
   void initState() {
     super.initState();
+    if (Platform.isWindows) _cleanupBacklog(); // eski PhotoCapture_*.jpeg to'plamини tozalash (disk to'lган)
     _t = Timer.periodic(const Duration(seconds: 4), (_) => _tick());
+  }
+
+  /// Fon-kadrlar eskiда Pictures papkasига to'planиб qolган (PhotoCapture_*.jpeg) — bir marta
+  /// ishga tushishда tozalaymiz (disk to'lmasin). Yangi kadrlar _tick()да darhol o'chiriladi.
+  Future<void> _cleanupBacklog() async {
+    try {
+      final dirs = <String>[];
+      final up = Platform.environment['USERPROFILE'];
+      if (up != null) dirs.add('$up\\Pictures');
+      try { dirs.add(Directory.systemTemp.path); } catch (_) {}
+      for (final dp in dirs) {
+        final d = Directory(dp);
+        if (!d.existsSync()) continue;
+        for (final e in d.listSync()) {
+          if (e is File && e.path.contains('PhotoCapture_')) {
+            try { e.deleteSync(); } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   @override
@@ -83,6 +105,7 @@ class _FaceWatchHostState extends ConsumerState<FaceWatchHost> {
       await _ensureCam();
       final x = await _cam!.takePicture();
       final bytes = await x.readAsBytes();
+      try { File(x.path).deleteSync(); } catch (_) {}   // kadrni DARHOL o'chiramiz — Pictures papkasi to'lmasin (PhotoCapture_*.jpeg to'planmasin)
       if (bytes.length < 4000) return;
       final r = await ref
           .read(dioProvider)
