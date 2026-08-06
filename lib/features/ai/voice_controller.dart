@@ -282,13 +282,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         _busy = false;
         continue;
       }
-      if (text != null && text.isNotEmpty && _valid(text) && _greetIntent(text)) {
-        // SALOMLASHISH (ismsiz ham): odam "Assalomu alaykum" desa — iliq javob beramiz
-        // (faqat qisqa sof-salom ibora; cooldown bilan — TV/shovqin spam qilmasin)
-        _logHeard(text, acted: true);
-        await _speak(_greetReply(), video: false);
-        continue;
-      }
+      // ESLATMA: avval "Assalomu alaykum" (ismsiz) eshitilса ham o'zidan salomlashardi
+      // → O'CHIRILDI (2026-08-06, user: «o'zidan o'zi gapirmasin, faqat Alomat deb
+      //  chaqirilганда javob bersin»). Salom ham endi wake-so'z talab qiladi (_handle).
       if (text != null && text.isNotEmpty && _valid(text)) {
         await _handle(text);
       } else if ((onAiPage?.call() ?? false) &&
@@ -480,11 +476,11 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     String content;
     if (cmd != null) {
       content = cmd;
-    } else if (onAi && (DateTime.now().isBefore(_followUntil) || text.trim().length >= 5)) {
-      // AI SAHIFASIDA ism SHART EMAS (2026-07-28, user: "savol bersa o'sha zahoti javob
-      // bermayapti"): foydalanuvchi AI ekraniga O'ZI kirgan → to'g'ridan savolга javob
-      // beriladi. Begona-gap/o'z-ovoz xavfi endi EXO-FILTR (_isEcho) bilan yopilgan.
-      // BOSHQA sahifalarда esa hamon ism ("Kadastr AI") kerak.
+    } else if (onAi && DateTime.now().isBefore(_followUntil)) {
+      // FAQAT ISM BILAN (2026-08-06, user: "o'zidan o'zi gapirmasin; faqat Alomat deb
+      // chaqirilganda buyruq qabul qilsin"). AI sahifasida ham ambient nutq ism talab
+      // qiladi; YAGONA istisno — kiosk endigina javob bergan 15s "suhbat oynasi"
+      // (_followUntil) ichida davom-savoli. Mikrofon TUGMASI ism talab qilmaydi.
       content = text;
       _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
     } else {
@@ -708,29 +704,6 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         'uz': 'Eshitaman, savolingizni ayting.',
         'ru': 'Слушаю, задайте вопрос.',
         'en': 'I am listening, ask your question.',
-      }[_lang]!;
-
-  // ===== OVOZLI SALOMLASHISH (2026-08-02, user talabi "salomlashsin") =====
-  DateTime _lastVoiceGreet = DateTime.fromMillisecondsSinceEpoch(0);
-
-  /// Sof salom-ibora (≤4 so'z, savolsiz) — "Assalomu alaykum", "Salom" ...
-  /// Whisper sukutda "Assalomu alaykum" gallyutsinatsiya qilishi mumkin (initial_prompt'da bor)
-  /// → 90s cooldown + exo-filtr bilan cheklangan.
-  bool _greetIntent(String text) {
-    if (DateTime.now().difference(_lastVoiceGreet).inSeconds < 90) return false;
-    final t = _normTxt(text);
-    if (t.split(' ').length > 4) return false;
-    final ok = RegExp(r'^(assalomu?\s*alaykum|assalom|salom\s*alaykum|va\s*alaykum\s*assalom|salom|'
-            r'здравствуйте|привет|добрый\s*(день|вечер|утро)|hello|hi|good\s*(morning|afternoon|evening))\b')
-        .hasMatch(t);
-    if (ok) _lastVoiceGreet = DateTime.now();
-    return ok;
-  }
-
-  String _greetReply() => {
-        'uz': 'Va alaykum assalom! Xush kelibsiz! Men Alomat — savolingiz bo‘lsa, bemalol ayting.',
-        'ru': 'Здравствуйте! Добро пожаловать! Я Аломат — если есть вопрос, спрашивайте.',
-        'en': 'Hello! Welcome! I am Alomat — feel free to ask me anything.',
       }[_lang]!;
 
   /// "Meni eslab qol" — yuzni ro'yxatga olish niyati (kamera + ism so'rash).
