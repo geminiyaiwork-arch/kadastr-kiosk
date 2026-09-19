@@ -404,6 +404,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
 
   Future<String?> _stt(String path) async {
     _lastSttEvent = '';
+    final timer = Stopwatch()..start();
     try {
       final bytes = await File(path).readAsBytes();
       if (bytes.length < 1500) return null;
@@ -419,6 +420,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       return (m['text'] ?? '').toString().trim();
     } catch (_) {
       return null;
+    } finally {
+      // ignore: avoid_print
+      print('[voice-latency] stt_ms=${timer.elapsedMilliseconds}');
     }
   }
 
@@ -646,6 +650,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     String answer = '';
     List<List<dynamic>>? table;
     bool persona = false;
+    final chatTimer = Stopwatch()..start();
     try {
       final r = await _dio.post('/ai/chat', data: {'q': q, 'lang': _lang});
       final m = Map<String, dynamic>.from(r.data as Map);
@@ -655,6 +660,8 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         table = (m['table'] as List).map((e) => (e as List).cast<dynamic>()).toList();
       }
     } catch (_) {}
+    // ignore: avoid_print
+    print('[voice-latency] chat_ms=${chatTimer.elapsedMilliseconds}');
     if (answer.trim().isEmpty) answer = _fallback();
     if (persona) {
       // AI o'ziga oid savol ("isming nima" ...) — ekranda FAQAT avatar qoladi (karta/jadval yo'q)
@@ -753,11 +760,11 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     _lastSpokenNorm = _normTxt(clean); // exo-filtr: shu gapning bo'laklari savol emas
     // POYGA-FIX: birinchi salomlashuvda avatar-konfig hali yuklanmagan bo'ladi
     // (ikkalasi bir soniyada boshlanadi) -> null deb video o'tkazib yuborilardi.
-    // Qisqa kutamiz — konfig kelsa video, kelmasa oddiy ovoz.
+    // Sovuq startda sozlama ovozni uzoq ushlab turmasin; keyingi javobda tayyor bo‘ladi.
     var avCfg = ref.read(avatarProvider).valueOrNull;
     if (avCfg == null) {
       try {
-        avCfg = await ref.read(avatarProvider.future).timeout(const Duration(seconds: 4));
+        avCfg = await ref.read(avatarProvider.future).timeout(const Duration(milliseconds: Env.avatarConfigWaitMs));
       } catch (_) {}
     }
     final voice = (avCfg?.male ?? false) ? 'sardor' : 'madina';
@@ -769,7 +776,8 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       try {
         final ap = ref.read(avatarPlayerProvider.notifier);
         state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
-        final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang, voice: voice);
+        final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang,
+            voice: voice, cachedOnly: !Env.generateSpeechVideo);
         if (ok) {
           state = state.copyWith(speaking: false);
           _quietUntil = DateTime.now().add(const Duration(milliseconds: 3000)); // echo-sukut
@@ -807,8 +815,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
           }
         }
       }
-      final tailFut = (tail != null) ? _fetchTts(tail, voice) : null; // parallel: davomi fonda
-      await _playTts(await _fetchTts(head, voice), head, voice);
+      final headFut = _fetchTts(head, voice); // birinchi ovoz so‘rovi avval yuboriladi
+      final tailFut = (tail != null) ? _fetchTts(tail, voice) : null;
+      await _playTts(await headFut, head, voice);
       if (tailFut != null && state.speaking) {
         // stopSpeaking bo'lgan bo'lsa (sahifa almashdi) davomini o'ynatmaymiz
         await _playTts(await tailFut, tail!, voice);
@@ -826,6 +835,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   /// TTS mp3 ni dio (keep-alive) bilan yuklab lokal faylga yozadi — UrlSource'ning har
   /// safar YANGI TLS ulanishi (+0.7s) yo'qoladi. Xato bo'lsa null (UrlSource fallback).
   Future<String?> _fetchTts(String text, String voice) async {
+    final timer = Stopwatch()..start();
     try {
       final r = await _dio.get(
         '/tts/synthesize',
@@ -839,6 +849,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       return f.path;
     } catch (_) {
       return null;
+    } finally {
+      // ignore: avoid_print
+      print('[voice-latency] tts_fetch_ms=${timer.elapsedMilliseconds} chars=${text.length}');
     }
   }
 

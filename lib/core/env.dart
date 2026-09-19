@@ -17,7 +17,7 @@ class Env {
   // App version (reported via heartbeat; keep in sync with pubspec).
   // ⚠️ MUHIM: pubspec.yaml `version:` BILAN BIRGA oshir — aks holda avto-yangilanish
   // manifestдан «yangi» ko'rib cheksiz qayta-o'rnatadi + admin/versiya-barда eski ko'rinadi.
-  static const appVersion = '1.9.46';
+  static const appVersion = '1.9.47';
 
   // Voice timing + native VAD (dBFS amplitude from `record`; tune on Windows mic)
   static const onsetDb = -38.0; // above this = speech onset
@@ -25,7 +25,10 @@ class Env {
   static const onsetPollMs = 140;
   static const onsetTimeoutMs = 8000;
   static const endPollMs = 100;
-  static const endSilenceMs = 750; // gap tugashi (tezroq javob; 900 dan tushirildi — 2026-08-02)
+  static const endSilenceMs = 600; // 120 ms polling bilan 5 sukut namunasi; kioskda pauzali nutqni tekshiring
+  // Tez ovoz: tayyor avatar videosi ishlaydi, yangi video javobni ushlab turmaydi.
+  static const generateSpeechVideo = false;
+  static const avatarConfigWaitMs = 250;
   static const utteranceMaxMs = 22000;
   static const minVoicedMs = 150;
   static const armedMs = 18000;

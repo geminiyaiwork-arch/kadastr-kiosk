@@ -160,7 +160,7 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
 
   /// Muloqat javobini lab-sinxron video bilan gapiradi. Muvaffaqiyatда `true`
   /// (TTS chalinmaydi — ovoz video ichida); Windows emas / xato / bo'sh fayl → `false`.
-  Future<bool> speak(dynamic av, String text, String lang, {String voice = 'madina'}) async {
+  Future<bool> speak(dynamic av, String text, String lang, {String voice = 'madina', bool cachedOnly = false}) async {
     if (!Platform.isWindows) return false;
     final clean = text.trim();
     if (clean.isEmpty) return false;
@@ -178,6 +178,8 @@ class AvatarPlayer extends StateNotifier<AvatarPlayerState> {
       final key = _hash('$voice|$lang|$say');
       final file = File('${dir.path}${Platform.pathSeparator}$key.mp4');
       if (!await file.exists() || (await file.length()) < 1000) {
+        // Keshda yo‘q video uchun generatsiyani kutmay, oddiy TTS'ga qaytamiz.
+        if (cachedOnly) return false;
         final url = '${Env.apiBase}/avatar/speak'
             '?text=${Uri.encodeQueryComponent(say)}&lang=$lang&voice=$voice';
         final resp = await _dio.get<List<int>>(
