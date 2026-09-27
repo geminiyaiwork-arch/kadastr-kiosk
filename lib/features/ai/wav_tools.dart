@@ -114,6 +114,18 @@ Uint8List trimWavStart(Uint8List wav, int startMs, {int minKeepMs = 300}) {
   return buildWav(pcm, sampleRate: info.sampleRate, channels: info.channels);
 }
 
+/// Faqat birinchi [maxMs] ms ni qoldiradi (zastavkada chaqiruv so'zini tekshirish uchun
+/// qisqa bo'lak). Qisqaroq bo'lsa yoki WAV o'qilmasa — asl baytlar.
+Uint8List truncateWav(Uint8List wav, int maxMs) {
+  final info = parseWav(wav);
+  if (info == null || maxMs <= 0) return wav;
+  var keep = maxMs * info.bytesPerMs;
+  keep -= keep % info.blockAlign;
+  if (keep >= info.dataLength) return wav;
+  final pcm = Uint8List.sublistView(wav, info.dataOffset, info.dataOffset + keep);
+  return buildWav(pcm, sampleRate: info.sampleRate, channels: info.channels);
+}
+
 /// (RMS dBFS, peak dBFS) — to'g'ri `data` ofsetidan (avval 44 deb taxmin qilinardi).
 (double, double) wavLevels(Uint8List wav) {
   final info = parseWav(wav);

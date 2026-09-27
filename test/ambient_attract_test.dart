@@ -235,7 +235,8 @@ void main() {
       c = ProviderContainer(overrides: [
         dioProvider.overrideWithValue(Dio(BaseOptions(baseUrl: '${server.origin}/api/v1'))),
         avatarProvider.overrideWith((ref) async => const AvatarConfig()),
-        voiceProvider.overrideWith((ref) => VoiceController(ref, player: player, recorder: rec)),
+        voiceProvider.overrideWith((ref) => VoiceController(ref,
+            player: player, recorder: rec, attractPause: const Duration(milliseconds: 1500))),
       ]);
       await c.read(avatarProvider.future);
       vc = c.read(voiceProvider.notifier);
@@ -263,6 +264,50 @@ void main() {
     });
 
     int stt() => server.hits['/api/v1/stt'] ?? 0;
+
+    const maxClip = 44 + 16000 * 2 * 2500 ~/ 1000; // 2.5 s PCM16 mono + header
+
+    test('screensaver clips are ≤2.5 s and sent with mode=wake; long wake+question re-sent once in full',
+        () async {
+      server.sttScript.addAll(['Alomat auksion', 'Alomat, auksion yerlar nechta']);
+      rec.speak(ms: 3000);
+      await _until(() => player.played.length == 3);
+      expect(server.sttRequests.length, 2);
+      final (mode1, size1) = server.sttRequests[0];
+      expect(mode1, 'wake');
+      expect(size1, lessThanOrEqualTo(maxClip));
+      final (mode2, size2) = server.sttRequests[1];
+      expect(mode2, isNull); // normal mode after the wake is confirmed
+      expect(size2, greaterThan(maxClip));
+      expect(server.streamBodies.single['q'], 'auksion yerlar nechta');
+    });
+
+    test('duty-cycle cap: 6 screensaver clips without a wake → pause, then resume', () async {
+      for (var i = 1; i <= 6; i++) {
+        server.sttScript.add('musiqa va reklama $i');
+        rec.speak(ms: 500);
+        await _until(() => stt() == i);
+      }
+      await _until(() => vc.attractPaused, ms: 2000);
+      expect(server.sttRequests.every((r) => r.$1 == 'wake' && r.$2 <= maxClip), isTrue);
+      server.sttScript.add('Alomat');
+      rec.speak(ms: 500);
+      await Future<void>.delayed(const Duration(milliseconds: 1000));
+      expect(stt(), 6, reason: 'no clips are sent while paused');
+      await _until(() => dismissals == 1, ms: 6000); // resumes after the (test) 1.5 s pause
+      expect(vc.attractPaused, isFalse);
+    });
+
+    test('a touch cancels the duty-cycle pause', () async {
+      for (var i = 1; i <= 6; i++) {
+        server.sttScript.add('shovqin $i');
+        rec.speak(ms: 400);
+        await _until(() => stt() == i);
+      }
+      await _until(() => vc.attractPaused, ms: 2000);
+      vc.noteTouch();
+      expect(vc.attractPaused, isFalse);
+    });
 
     test('speech without the wake word (or wake word not first) is ignored', () async {
       server.sttScript.addAll(['Bugun havo juda yaxshi', 'Salom Alomat qalaysan']);

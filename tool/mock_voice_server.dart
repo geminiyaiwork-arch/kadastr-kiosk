@@ -37,6 +37,9 @@ class MockVoiceServer {
   /// /stt javoblari navbati (testlar uchun); bo'sh bo'lsa standart matn.
   final List<String> sttScript = [];
 
+  /// Har /stt so'rovi: (mode parametri, tana hajmi baytda).
+  final List<(String?, int)> sttRequests = [];
+
   int get port => _server.port;
   String get origin => 'http://127.0.0.1:$port';
 
@@ -117,7 +120,11 @@ class MockVoiceServer {
           res.add(mp3);
           return await res.close();
         case '/api/v1/stt':
-          await req.drain<void>();
+          var n = 0;
+          await for (final chunk in req) {
+            n += chunk.length;
+          }
+          sttRequests.add((req.uri.queryParameters['mode'], n));
           await Future<void>.delayed(const Duration(milliseconds: 300));
           return _json(res, {'text': sttScript.isNotEmpty ? sttScript.removeAt(0) : 'Alomat, auksion yerlar nechta'});
         case '/api/v1/ai/heard':

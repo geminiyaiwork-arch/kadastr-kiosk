@@ -72,6 +72,16 @@ void main() {
       expect(identical(trimWavStart(w, -5), w), isTrue);
     });
 
+    test('truncateWav keeps only the first N ms', () {
+      final w = _wav(ms: 4000, headerPad: 2);
+      final t = truncateWav(w, 2500);
+      final info = parseWav(t)!;
+      expect(info.dataOffset, 44);
+      expect(info.dataLength, 16000 * 2 * 2500 ~/ 1000);
+      final short = _wav(ms: 1000);
+      expect(identical(truncateWav(short, 2500), short), isTrue);
+    });
+
     test('wavLevels: silence vs tone', () {
       expect(wavLevels(_wav(ms: 200)).$1, lessThan(-100));
       final tone = wavLevels(_wav(ms: 200, amp: 0.1));

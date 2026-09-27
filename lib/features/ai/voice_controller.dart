@@ -94,12 +94,16 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         Duration(seconds: 5),
         Duration(seconds: 10),
         Duration(seconds: 30),
-      ]})
+      ],
+      this.attractPause = const Duration(seconds: Env.attractPauseSec)})
       : _injectedPlayer = player,
         _injectedRec = recorder,
         super(const VoiceUiState());
   final Ref ref;
   final List<Duration> retryBackoff;
+
+  /// Zastavkada chaqiruvsiz ko'p bo'lak ketsa — tinglash pauzasi (duty-cycle cheki).
+  final Duration attractPause;
   final ClipPlayer? _injectedPlayer;
   final AudioRecorder? _injectedRec;
   AudioRecorder? _recInst;
@@ -127,8 +131,35 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   /// Zastavkani yopish (teginish bilan bir xil) — zastavkada uyg'onilganda.
   void Function()? dismissAttract;
 
-  /// Ekranga teginish: zastavka-qo'riqchisi qayta yoqiladi.
-  void noteTouch() => attractGuard.onTouch();
+  /// Ekranga teginish: zastavka-qo'riqchisi qayta yoqiladi, duty-cycle pauzasi bekor.
+  void noteTouch() {
+    attractGuard.onTouch();
+    _attractClips.clear();
+    _attractPausedUntil = null;
+  }
+
+  // Zastavka duty-cycle: chaqiruvsiz yuborilgan bo'laklar vaqti (oxirgi 60s).
+  final _attractClips = <DateTime>[];
+  DateTime? _attractPausedUntil;
+
+  /// Zastavka tinglash duty-cycle pauzasida (diagnostika/test).
+  bool get attractPaused {
+    final u = _attractPausedUntil;
+    return u != null && DateTime.now().isBefore(u);
+  }
+
+  /// Chaqiruvsiz zastavka bo'lagi yuborildi — 60s ichida ≥6 bo'lsa 60s pauza.
+  void _noteAttractClipWithoutWake() {
+    final now = DateTime.now();
+    _attractClips.add(now);
+    _attractClips.removeWhere((t) => now.difference(t).inSeconds >= Env.attractClipWindowSec);
+    if (_attractClips.length >= Env.attractClipCap) {
+      _attractClips.clear();
+      _attractPausedUntil = now.add(attractPause);
+      _log('screensaver: ${Env.attractClipCap} clips in ${Env.attractClipWindowSec}s without a wake '
+          '— screensaver listening paused for ${attractPause.inSeconds}s');
+    }
+  }
 
   bool _on = false;
   bool _busy = false;
@@ -352,7 +383,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   /// qo'riqchi o'chirmagan bo'lsa (wake-only).
   bool _listenAllowed() {
     if (canListen != null && !canListen!()) return false;
-    if (_wakeOnlyNow() && attractGuard.blocked) return false;
+    if (_wakeOnlyNow() && (attractGuard.blocked || attractPaused)) return false;
     return true;
   }
 
@@ -529,7 +560,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         final t = lt = _takeOver();
         state = state.copyWith(phase: VoicePhase.transcribing);
         final sentAt = DateTime.now();
-        final text = await _stt(utt.wav);
+        // Zastavkada faqat birinchi 2.5s (ism baribir birinchi so'z) + `mode=wake`:
+        // server Gemini-fallback, dataset va chuchkirish tasnifini o'tkazib yuboradi.
+        final clip = utt.wakeOnly ? truncateWav(utt.wav, Env.wakeClipMs) : utt.wav;
+        var text = await _stt(clip, wakeMode: utt.wakeOnly);
         if (t != _turn) continue; // tugma/pult/sahifa egalladi — natija eskirdi
         _turnEos = utt.endAt;
         _turnSttMs = DateTime.now().difference(sentAt).inMilliseconds;
@@ -538,11 +572,24 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         if (utt.wakeOnly) {
           // ZASTAVKA: faqat "Alomat" bilan BOSHLANGAN gap (davom-oynasi/buyruq/chuchkirish yo'q).
           final cmd = text == null || !_valid(text) ? null : stripWakeWord(text, within: 1);
-          if (cmd == null || !attractGuard.onWake()) {
+          if (cmd == null) {
+            _noteAttractClipWithoutWake();
             _release(t, spoke: false); // video/begona nutq — jim (serverga log ham yo'q)
             continue;
           }
+          _attractClips.clear();
+          if (!attractGuard.onWake()) {
+            _release(t, spoke: false);
+            continue;
+          }
           _log('screensaver wake');
+          if (!identical(clip, utt.wav)) {
+            // Gap 2.5s dan uzun edi — ismdan keyingi savol kesilgan bo'lishi mumkin: faqat
+            // CHAQIRUV tasdiqlangach to'liq gapni bir marta oddiy rejimda qayta tanitamiz.
+            final full = await _stt(utt.wav);
+            if (t != _turn) continue;
+            if (full != null && _valid(full) && stripWakeWord(full, within: 1) != null) text = full;
+          }
           dismissAttract?.call(); // teginish bilan bir xil: zastavka yopiladi
           await _handle(text!, t, fromAttract: true);
           continue;
@@ -713,7 +760,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   /// Oxirgi /stt javobidagi hodisa (masalan 'sneeze' — chuchkirish).
   String _lastSttEvent = '';
 
-  Future<String?> _stt(Uint8List bytes) async {
+  Future<String?> _stt(Uint8List bytes, {bool wakeMode = false}) async {
     _lastSttEvent = '';
     final timer = Stopwatch()..start();
     try {
@@ -722,7 +769,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         try {
           final r = await _dio.post(
             '/stt',
-            queryParameters: {'lang': _lang},
+            queryParameters: {'lang': _lang, if (wakeMode) 'mode': 'wake'},
             data: Stream.fromIterable([bytes]), // BUTUN bayt bir bo'lakda
             options: Options(contentType: 'application/octet-stream', headers: {Headers.contentLengthHeader: bytes.length}),
           );

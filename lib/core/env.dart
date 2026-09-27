@@ -44,6 +44,12 @@ class Env {
   static const wakeAckQuietMs = 350; // "Labbay! Eshitaman." dan keyin — odam darhol gapiradi
   // Matnli aks-sado filtri faqat nutq shu vaqt ichida boshlangan bo'lsa qo'llanadi.
   static const echoWindowMs = 3000;
+  // Zastavka (wake-only) — server yuklamasi: STT'ga faqat birinchi 2.5s (`mode=wake`);
+  // 60s ichida chaqiruvsiz ≥6 bo'lak ketsa zastavka tinglash 60s pauza.
+  static const wakeClipMs = 2500;
+  static const attractClipCap = 6;
+  static const attractClipWindowSec = 60;
+  static const attractPauseSec = 60;
   static const utteranceMaxMs = 22000;
   static const minVoicedMs = 150;
   static const armedMs = 18000;
