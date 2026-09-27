@@ -126,7 +126,51 @@ class VoiceController extends StateNotifier<VoiceUiState> {
 
   Dio get _dio => ref.read(dioProvider);
   Future<void> _sleep(int ms) => Future.delayed(Duration(milliseconds: ms));
-  void setLang(String lang) => _lang = lang;
+  void setLang(String lang) {
+    _lang = lang;
+    if (_on) unawaited(_primeWakeAudio());
+  }
+
+  // Only the fixed wake acknowledgement is cached, never a user's question.
+  final _wakeAudio = <String, List<int>>{};
+  final _wakeLoading = <String, Future<List<int>?>>{};
+  String _wakeText(String lang) => {
+    'uz': 'Labbay! Eshitaman.',
+    'ru': 'Да, слушаю!',
+    'en': 'Yes, I am listening!',
+  }[lang] ?? 'Labbay! Eshitaman.';
+
+  Future<List<int>?> _loadWakeAudio(String lang, String voice) {
+    final key = '$lang|$voice';
+    final cached = _wakeAudio[key];
+    if (cached != null) return Future.value(cached);
+    final pending = _wakeLoading[key];
+    if (pending != null) return pending;
+    final job = () async {
+      try {
+        final r = await _dio.get<List<int>>('/tts/synthesize',
+          queryParameters: {'text': _wakeText(lang), 'voice': voice, 'lang': lang},
+          options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 25)));
+        final bytes = r.data;
+        if (bytes == null || bytes.length < 200) return null;
+        _wakeAudio[key] = bytes;
+        return bytes;
+      } catch (_) { return null; }
+    }();
+    _wakeLoading[key] = job;
+    job.then((_) => _wakeLoading.remove(key));
+    return job;
+  }
+
+  Future<void> _primeWakeAudio() async {
+    final lang = _lang;
+    var avatar = ref.read(avatarProvider).valueOrNull;
+    if (avatar == null) {
+      try { avatar = await ref.read(avatarProvider.future).timeout(const Duration(seconds: 2)); } catch (_) {}
+    }
+    if (!_on) return;
+    await _loadWakeAudio(lang, (avatar?.male ?? false) ? 'sardor' : 'madina');
+  }
 
   Future<void> startAmbient({
     required String lang,
@@ -151,6 +195,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       return;
     }
     _on = true;
+    unawaited(_primeWakeAudio());
     state = state.copyWith(phase: VoicePhase.listening, clearError: true);
     _loop();
   }
@@ -494,6 +539,13 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
     _logHeard(text, acted: true);
     ref.read(voiceActivityProvider.notifier).state++; // idle-taymerga "faollik" pulsi
+    // Name only: acknowledge from preloaded audio without navigation delay or LLM.
+    if (cmd != null && content.trim().isEmpty) {
+      if (!onAi) navToAi?.call();
+      await _speak(_labbay(), video: false);
+      _followUntil = DateTime.now().add(const Duration(seconds: 15));
+      return;
+    }
     // "MENI ESLAB QOL" — yuz-ro'yxat (kamera) ekrani ochiladi (1.9.36)
     if (_enrollIntent(content)) {
       await stopSpeaking();
@@ -730,11 +782,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   }
 
   /// Ism bilan chaqirilganda (savolsiz) — "Labbay, eshitaman!" deb javob beradi.
-  String _labbay() => {
-        'uz': 'Hoy, labbay! Eshitaman, savolingizni ayting.',
-        'ru': 'Да, слушаю вас! Задавайте ваш вопрос.',
-        'en': 'Yes, I am listening! Please ask your question.',
-      }[_lang]!;
+  String _labbay() => _wakeText(_lang);
 
   String _repeatPrompt() => {
         'uz': 'Kechirasiz, tushunmadim. Qaytadan gapiring.',
@@ -762,7 +810,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     // (ikkalasi bir soniyada boshlanadi) -> null deb video o'tkazib yuborilardi.
     // Sovuq startda sozlama ovozni uzoq ushlab turmasin; keyingi javobda tayyor bo‘ladi.
     var avCfg = ref.read(avatarProvider).valueOrNull;
-    if (avCfg == null) {
+    if (avCfg == null && clean != _labbay()) {
       try {
         avCfg = await ref.read(avatarProvider.future).timeout(const Duration(milliseconds: Env.avatarConfigWaitMs));
       } catch (_) {}
@@ -837,12 +885,17 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   Future<String?> _fetchTts(String text, String voice) async {
     final timer = Stopwatch()..start();
     try {
-      final r = await _dio.get(
-        '/tts/synthesize',
-        queryParameters: {'text': text, 'voice': voice, 'lang': _lang},
-        options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 25)),
-      );
-      final data = r.data as List<int>;
+      final List<int> data;
+      if (text == _labbay()) {
+        final ready = await _loadWakeAudio(_lang, voice);
+        if (ready == null) return null;
+        data = ready;
+      } else {
+        final r = await _dio.get('/tts/synthesize',
+          queryParameters: {'text': text, 'voice': voice, 'lang': _lang},
+          options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 25)));
+        data = r.data as List<int>;
+      }
       if (data.length < 200) return null;
       final f = File('${Directory.systemTemp.path}/kadastr_tts_${DateTime.now().microsecondsSinceEpoch}.mp3');
       await f.writeAsBytes(data, flush: true);
