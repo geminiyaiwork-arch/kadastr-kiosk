@@ -17,6 +17,7 @@ import '../../core/services/avatar_player.dart';
 import '../../core/theme/icons.dart';
 import '../../core/util/fmt.dart';
 import '../../router.dart';
+import '../../shell/kiosk_busy.dart';
 import 'voice_controller.dart';
 
 /// AI sahifa — IKKI HOLAT (user spec 2026-07-28):
@@ -55,7 +56,7 @@ const _palSky = _Pal(Icons.apartment_rounded, Color(0xFFDBEAFE), Color(0xFFE4EEF
 const _palOrange = _Pal(Icons.location_on_rounded, Color(0xFFFFE6D2), Color(0xFFFFECE0), Color(0xFFF97316));
 const _pals = [_palBlue, _palGreen, _palPurple, _palSky, _palOrange];
 
-class _AiScreenState extends ConsumerState<AiScreen> {
+class _AiScreenState extends ConsumerState<AiScreen> with KioskBusyHold {
   // AI "yuklanmoqda" (foizli warmup) holati
   Map<String, dynamic>? _warmup;
   Timer? _warmupPoll;
@@ -64,9 +65,18 @@ class _AiScreenState extends ConsumerState<AiScreen> {
   final _searchCtrl = TextEditingController();
   String _q = '';
 
+  // dispose()/intro `finally` ichida ref.read ISHLAMAYDI (riverpod 2.6: widget
+  // unmount bo'lgach otadi) — kerakli notifier'lar oldindan olinadi.
+  late final VoiceController _vc;
+  late final StateController<bool> _introN;
+  late final StateController<bool> _warmupLoadingN;
+
   @override
   void initState() {
     super.initState();
+    _vc = ref.read(voiceProvider.notifier);
+    _introN = ref.read(introPlayingProvider.notifier);
+    _warmupLoadingN = ref.read(aiWarmupLoadingProvider.notifier);
     WidgetsBinding.instance.addPostFrameCallback((_) => _init());
   }
 
@@ -112,7 +122,6 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     } catch (_) {
       return false;
     }
-    var busyTaken = false; // kioskBusy faqat haqiqatan oshirilgan bo'lsa kamaytiriladi
     try {
       // yuklab olib keshlaymiz (takror kirishда qayta yuklamaydi)
       final base = await getApplicationSupportDirectory();
@@ -134,15 +143,15 @@ class _AiScreenState extends ConsumerState<AiScreen> {
       final playFile = await f.exists() ? f : File('${f.path}.tmp');
       final c = WinVideoPlayerController.file(playFile);
       await c.initialize().timeout(const Duration(seconds: 8));
-      if (!c.value.isInitialized || !mounted || ref.read(voiceProvider.notifier).inQuestion) {
+      if (!c.value.isInitialized || !mounted || _vc.inQuestion) {
         try { await c.dispose(); } catch (_) {}
         return false;
       }
       // AI ovozi/gapi bo'lmasin — intro paytida mikrofon TINGLAMAYDI (introPlaying)
-      try { await ref.read(voiceProvider.notifier).stopSpeaking(); } catch (_) {}
-      ref.read(introPlayingProvider.notifier).state = true;
-      ref.read(kioskBusyProvider.notifier).state++; // idle-reset urmasin
-      busyTaken = true;
+      try { await _vc.stopSpeaking(); } catch (_) {}
+      if (!mounted) { try { await c.dispose(); } catch (_) {} return false; }
+      _introN.state = true;
+      setKioskBusy(true); // idle-reset urmasin
       await c.setVolume(1.0);
       setState(() => _introCtl = c);
       await c.play();
@@ -167,12 +176,11 @@ class _AiScreenState extends ConsumerState<AiScreen> {
       final c = _introCtl;
       if (mounted) setState(() => _introCtl = null);
       try { await c?.dispose(); } catch (_) {}
-      try { ref.read(introPlayingProvider.notifier).state = false; } catch (_) {}
-      // Avval xato/erta-chiqish yo'llarida ham kamaytirilardi (oshirilmagan bo'lsa ham) →
-      // hisoblagich manfiy bo'lib, video/murojaat paytidagi "band" himoyasi yo'qolardi.
-      if (busyTaken) {
-        try { ref.read(kioskBusyProvider.notifier).update((n) => n > 0 ? n - 1 : 0); } catch (_) {}
-      }
+      // Keshlangan notifier: sahifa intro o'rtasida yopilsa ham (ref endi otadi) mikrofon
+      // bloki (introPlaying) va band-hisoblagich ALBATTA bo'shaydi. Avval ref.read bu yerda
+      // jim yiqilib, intro'dan keyin mikrofon hamma sahifada o'chiq qolardi.
+      if (_introN.state) _introN.state = false;
+      setKioskBusy(false); // unmount bo'lgan bo'lsa KioskBusyHold.dispose allaqachon bo'shatgan (no-op)
     }
   }
 
@@ -191,15 +199,13 @@ class _AiScreenState extends ConsumerState<AiScreen> {
   @override
   void dispose() {
     _warmupPoll?.cancel();
-    final vc = ref.read(voiceProvider.notifier);
     // AI sahifadan chiqildi — kutilayotgan/gapirilayotgan javob va qo'lda yozuv yangi
-    // sahifada davom etmasin (eskirgan ovoz bo'lmasin). Provider'larni daraxt
-    // yig'ilayotgan paytda o'zgartirmaslik uchun microtask'da.
-    Future.microtask(() {
-      try {
-        ref.read(aiWarmupLoadingProvider.notifier).state = false;
-        ref.read(introPlayingProvider.notifier).state = false;
-      } catch (_) {}
+    // sahifada davom etmasin (eskirgan ovoz bo'lmasin). ref bu yerda OTADI (riverpod 2.6) —
+    // shuning uchun initState'da olingan notifier'lar; provider'lar daraxt yig'ilgach.
+    final vc = _vc, introN = _introN, warmN = _warmupLoadingN;
+    scheduleMicrotask(() {
+      if (warmN.state) warmN.state = false;
+      if (introN.state) introN.state = false;
       if (vc.inQuestion) vc.stopSpeaking();
       vc.cancelTalk();
     });

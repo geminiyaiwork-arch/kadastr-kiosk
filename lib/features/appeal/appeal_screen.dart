@@ -11,7 +11,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/repository.dart';
 import '../../core/theme/text_styles.dart';
 import '../../core/theme/tokens.dart';
-import '../../router.dart';
+import '../../shell/kiosk_busy.dart';
 import '../../shell/kb_attachments.dart';
 import '../../shell/kiosk_shell.dart';
 import '../common/kfield.dart';
@@ -25,7 +25,7 @@ class AppealScreen extends ConsumerStatefulWidget {
   ConsumerState<AppealScreen> createState() => _AppealScreenState();
 }
 
-class _AppealScreenState extends ConsumerState<AppealScreen> {
+class _AppealScreenState extends ConsumerState<AppealScreen> with KioskBusyHold {
   final _name = TextEditingController();
   final _surname = TextEditingController();
   final _patronymic = TextEditingController();
@@ -48,12 +48,9 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
   String? _sentId;
 
   // Idle-taymer band nazorati (video-murojaat yozilayotganda asosiy menyuga otmasin)
-  bool _busy = false;
-  void _setBusy(bool v) {
-    if (v == _busy) return;
-    _busy = v;
-    ref.read(kioskBusyProvider.notifier).update((n) => (n + (v ? 1 : -1)).clamp(0, 9999));
-  }
+  // dispose'da ref ishlatilmaydi (riverpod otadi → kamera/controller'lar dispose bo'lmasdi) —
+  // KioskBusyHold keshlangan notifier bilan bo'shatadi.
+  void _setBusy(bool v) => setKioskBusy(v);
 
   @override
   void initState() {
@@ -66,7 +63,6 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
 
   @override
   void dispose() {
-    _setBusy(false);
     for (final c in [_name, _surname, _patronymic, _year, _phone, _text]) {
       c.dispose();
     }

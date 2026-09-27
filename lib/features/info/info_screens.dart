@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player_win/video_player_win.dart';
 
 import '../../router.dart';
+import '../../shell/kiosk_busy.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/models.dart';
@@ -81,21 +82,16 @@ class _DocVideoCard extends ConsumerStatefulWidget {
   ConsumerState<_DocVideoCard> createState() => _DocVideoCardState();
 }
 
-class _DocVideoCardState extends ConsumerState<_DocVideoCard> {
+class _DocVideoCardState extends ConsumerState<_DocVideoCard> with KioskBusyHold {
   WinVideoPlayerController? _vc;
   bool _started = false;
-  bool _busy = false;
 
   // Video o'ynaganда idle-taymer asosiy menyuga otmasin (uzoq ko'rish mumkin).
-  void _setBusy(bool v) {
-    if (v == _busy) return;
-    _busy = v;
-    ref.read(kioskBusyProvider.notifier).update((n) => (n + (v ? 1 : -1)).clamp(0, 9999));
-  }
+  // (dispose'da ref ishlatilmaydi — KioskBusyHold keshlangan notifier bilan bo'shatadi.)
+  void _setBusy(bool v) => setKioskBusy(v);
 
   @override
   void dispose() {
-    _setBusy(false);
     try { _vc?.pause(); } catch (_) {}   // dispose ba'zan ovozni darhol to'xtatmaydi → avval pause
     try { _vc?.dispose(); } catch (_) {}
     super.dispose();

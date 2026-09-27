@@ -12,7 +12,7 @@ import 'package:record/record.dart';
 
 import '../../core/i18n/strings.dart';
 import '../../core/network/api_client.dart';
-import '../../router.dart';
+import '../../shell/kiosk_busy.dart';
 import '../ai/voice_controller.dart';
 
 /// "MENI ESLAB QOL" (1.9.36): "Kadastr AI, meni eslab qol" deyilganda ochiladi.
@@ -28,7 +28,7 @@ class FaceEnrollScreen extends ConsumerStatefulWidget {
 
 enum _St { init, countdown, asking, listening, confirm, saving, done, error }
 
-class _FaceEnrollScreenState extends ConsumerState<FaceEnrollScreen> {
+class _FaceEnrollScreenState extends ConsumerState<FaceEnrollScreen> with KioskBusyHold {
   static const _bgTop = Color(0xFF10266B);
   static const _bgBot = Color(0xFF061233);
   static const _indigo = Color(0xFF5457F5);
@@ -43,26 +43,19 @@ class _FaceEnrollScreenState extends ConsumerState<FaceEnrollScreen> {
   bool _closing = false;
 
   Map<String, dynamic> get _t => I18N[ref.read(localeProvider)]!;
-  bool _busyTaken = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      ref.read(kioskBusyProvider.notifier).state++; // idle-reset urmasin
-      _busyTaken = true;
+      setKioskBusy(true); // idle-reset urmasin (dispose'da KioskBusyHold bo'shatadi)
       _start();
     });
   }
 
   @override
   void dispose() {
-    if (_busyTaken) {
-      try {
-        ref.read(kioskBusyProvider.notifier).update((n) => n > 0 ? n - 1 : 0);
-      } catch (_) {}
-    }
     _cam?.dispose();
     _rec.dispose();
     _nameCtrl.dispose();

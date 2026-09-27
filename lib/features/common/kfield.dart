@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -30,9 +32,13 @@ class KField extends ConsumerStatefulWidget {
 }
 
 class _KFieldState extends ConsumerState<KField> {
+  // dispose'da ref ishlatib bo'lmaydi (riverpod 2.6 otadi) — notifier oldindan olinadi.
+  late final VkFields _vkN;
+
   @override
   void initState() {
     super.initState();
+    _vkN = ref.read(vkFieldsProvider.notifier);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(vkFieldsProvider.notifier).register(VkFieldReg(widget.controller, widget.onEnter));
     });
@@ -40,7 +46,11 @@ class _KFieldState extends ConsumerState<KField> {
 
   @override
   void dispose() {
-    ref.read(vkFieldsProvider.notifier).unregister(widget.controller);
+    // Avval bu yerda ref.read otardi → maydon ro'yxatdan O'CHMASDI (klaviatura dispose
+    // bo'lgan controller'ga yozishga urinardi). Provider daraxt yig'ilgach o'zgartiriladi.
+    final n = _vkN;
+    final c = widget.controller;
+    scheduleMicrotask(() => n.unregister(c));
     super.dispose();
   }
 
