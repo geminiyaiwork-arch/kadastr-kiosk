@@ -25,15 +25,16 @@ bool isWakeToken(String w) {
 
 const _tails = {'xon', 'hon', 'xan', 'han', 'xona', 'хон', 'хан', 'jon', 'жон'};
 
-/// Birinchi 3 so'zda chaqiruv so'zini topadi. null = chaqiruv yo'q, '' = faqat ism,
-/// aks holda — ismdan keyingi buyruq/savol (kichik harf, tinish belgisiz).
-String? stripWakeWord(String text) {
+/// Birinchi [within] (standart 3) so'zda chaqiruv so'zini topadi. null = chaqiruv yo'q,
+/// '' = faqat ism, aks holda — ismdan keyingi buyruq/savol (kichik harf, tinish belgisiz).
+/// Zastavkada `within: 1` — gap ISM BILAN BOSHLANISHI shart.
+String? stripWakeWord(String text, {int within = 3}) {
   final low = text.toLowerCase().replaceAll(RegExp(r"""['’`ʻʼ.,!?:;«»"“”„()]"""), '').trim();
   if (low.isEmpty) return null;
   final words = low.split(RegExp(r'\s+'));
   var wi = -1;
   var span = 1;
-  for (var i = 0; i < words.length && i < 3; i++) {
+  for (var i = 0; i < words.length && i < within; i++) {
     final w = words[i];
     if (isWakeToken(w)) {
       wi = i;

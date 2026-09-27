@@ -36,6 +36,11 @@ class _IdleAttractHostState extends ConsumerState<IdleAttractHost> {
     super.initState();
     _t = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     ref.listenManual(voiceActivityProvider, (_, __) => _idle = 0);
+    // Zastavkada "Alomat" deyildi → VoiceController attractProvider'ni false qiladi —
+    // zastavka teginish bilan bir xil yopiladi.
+    ref.listenManual(attractProvider, (_, on) {
+      if (!on && _attract) _wake();
+    });
     // Bosh menyuga ('/') qaytilса — gapirayotган ovoz (sahifa-e'loni yoki AI javob) TO'XTASIN.
     ref.listenManual(currentRouteProvider, (_, next) {
       if (next == '/') { try { ref.read(voiceProvider.notifier).stopSpeaking(); } catch (_) {} }

@@ -12,6 +12,7 @@ import '../../core/network/repository.dart';
 import '../../core/services/avatar_player.dart';
 import '../../router.dart';
 import 'answer_session.dart';
+import 'attract_wake_guard.dart';
 import 'audio_clip_player.dart';
 import 'speech_queue.dart';
 import 'wake_word.dart';
@@ -66,10 +67,13 @@ class VoiceUiState {
 
 /// Bitta yozib olingan gap (ambient VAD): WAV baytlari + nutq boshi/oxiri vaqti.
 class _Utt {
-  _Utt(this.wav, this.onsetAt, this.endAt);
+  _Utt(this.wav, this.onsetAt, this.endAt, {this.wakeOnly = false});
   final Uint8List wav;
   final DateTime onsetAt;
   final DateTime endAt;
+
+  /// Zastavka paytida yozilgan — faqat chaqiruv so'zi bilan boshlansa qabul qilinadi.
+  final bool wakeOnly;
 }
 
 /// Yagona doimiy ovoz dvigateli: mic → VAD → /stt → wake-route → /ai/chat-stream → navbat.
@@ -81,11 +85,21 @@ class _Utt {
 /// qo'yardi, sahifa almashgach eski TTS chalinardi va mikrofon TTS paytida yoqilardi.
 class VoiceController extends StateNotifier<VoiceUiState> {
   /// [player]/[recorder] — faqat testlar uchun (plaginsiz soxta o'ynatuvchi).
-  VoiceController(this.ref, {ClipPlayer? player, AudioRecorder? recorder})
+  /// [retryBackoff] — mikrofon ochilmasa qayta urinish oraliqlari (oxirgisi takrorlanadi).
+  VoiceController(this.ref,
+      {ClipPlayer? player,
+      AudioRecorder? recorder,
+      this.retryBackoff = const [
+        Duration(seconds: 2),
+        Duration(seconds: 5),
+        Duration(seconds: 10),
+        Duration(seconds: 30),
+      ]})
       : _injectedPlayer = player,
         _injectedRec = recorder,
         super(const VoiceUiState());
   final Ref ref;
+  final List<Duration> retryBackoff;
   final ClipPlayer? _injectedPlayer;
   final AudioRecorder? _injectedRec;
   AudioRecorder? _recInst;
@@ -100,6 +114,21 @@ class VoiceController extends StateNotifier<VoiceUiState> {
 
   /// Test/diagnostika: ambient loop mikrofonni hozir kutyaptimi (false) yoki band (true).
   bool get busy => _busy;
+
+  /// Ambient tinglash ishga tushganmi.
+  bool get isOn => _on;
+
+  /// Zastavka-uyg'otish qo'riqchisi (o'z videosidan qayta-qayta uyg'onmaslik).
+  late final AttractWakeGuard attractGuard = AttractWakeGuard(log: _log);
+
+  /// Zastavka ochiq — faqat "Alomat" bilan BOSHLANGAN gap qabul qilinadi.
+  bool Function()? wakeOnlyMode;
+
+  /// Zastavkani yopish (teginish bilan bir xil) — zastavkada uyg'onilganda.
+  void Function()? dismissAttract;
+
+  /// Ekranga teginish: zastavka-qo'riqchisi qayta yoqiladi.
+  void noteTouch() => attractGuard.onTouch();
 
   bool _on = false;
   bool _busy = false;
@@ -264,28 +293,67 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     required bool Function() canListen,
     required void Function() navToAi,
     void Function(String route)? navTo,
+    bool Function()? wakeOnly,
+    void Function()? dismissAttract,
   }) async {
     this.onAiPage = onAiPage;
     this.canListen = canListen;
     this.navToAi = navToAi;
     this.navTo = navTo;
+    if (wakeOnly != null) wakeOnlyMode = wakeOnly;
+    if (dismissAttract != null) this.dismissAttract = dismissAttract;
     _lang = lang;
-    if (_on) return;
+    await _tryStart();
+  }
+
+  // Ishga tushish urinishlari (ilova ochilishida qurilma hali tayyor bo'lmasligi mumkin).
+  int _startFails = 0;
+  bool _starting = false;
+  Timer? _startRetry;
+  int _recFails = 0; // ketma-ket _rec.start xatolari (qayta ochish backoff)
+
+  Duration _backoff(int fails) => retryBackoff[(fails - 1).clamp(0, retryBackoff.length - 1)];
+
+  /// Mikrofon ruxsati/qurilma tayyor bo'lsa ambient'ni boshlaydi; bo'lmasa 2s, 5s, 10s,
+  /// keyin har 30s qayta urinadi (log faqat birinchi xato va tiklanishda).
+  Future<void> _tryStart() async {
+    if (_on || _starting || _disposed) return;
+    _starting = true;
+    _startRetry?.cancel();
+    _startRetry = null;
+    var ok = false;
     try {
-      if (!await _rec.hasPermission()) {
-        state = state.copyWith(error: 'mic');
-        return;
-      }
+      ok = await _rec.hasPermission();
     } catch (_) {
-      state = state.copyWith(error: 'mic');
+      ok = false;
+    }
+    _starting = false;
+    if (_disposed || _on) return;
+    if (!ok) {
+      _startFails++;
+      if (_startFails == 1) _log('mic not ready — retrying (${retryBackoff.map((d) => d.inSeconds).join('s, ')}s…)');
+      if (state.error != 'mic') state = state.copyWith(error: 'mic');
+      _startRetry = Timer(_backoff(_startFails), _tryStart);
       return;
     }
+    if (_startFails > 0) _log('mic ready after $_startFails failed attempt(s)');
+    _startFails = 0;
     _on = true;
     unawaited(AudioClipPlayer.sweepStaleTempFiles());
     unawaited(_primePhrases());
     _warmConnection(force: true);
     state = state.copyWith(phase: VoicePhase.listening, clearError: true);
     unawaited(_loop());
+  }
+
+  bool _wakeOnlyNow() => wakeOnlyMode?.call() ?? false;
+
+  /// Hozir tinglash mumkinmi: /appeal, /face-enroll, intro — yo'q; zastavkada faqat
+  /// qo'riqchi o'chirmagan bo'lsa (wake-only).
+  bool _listenAllowed() {
+    if (canListen != null && !canListen!()) return false;
+    if (_wakeOnlyNow() && attractGuard.blocked) return false;
+    return true;
   }
 
   /// Joriy faoliyatni DARHOL bekor qiladi: HTTP oqimi yopiladi, navbatdagi audio
@@ -450,8 +518,8 @@ class VoiceController extends StateNotifier<VoiceUiState> {
           await _sleep(80);
           continue;
         }
-        if (canListen != null && !canListen!()) {
-          await _sleep(300); // appeal/zastavka/intro — mikrofon boshqaniki
+        if (!_listenAllowed()) {
+          await _sleep(300); // appeal/face-enroll/intro yoki zastavka-qo'riqchisi — tinglamaymiz
           continue;
         }
         if (state.phase != VoicePhase.listening) state = state.copyWith(phase: VoicePhase.listening);
@@ -467,6 +535,18 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         _turnSttMs = DateTime.now().difference(sentAt).inMilliseconds;
         _lat('vad_end→stt_sent_ms=${sentAt.difference(utt.endAt).inMilliseconds} stt_ms=$_turnSttMs '
             'utt_ms=${utt.endAt.difference(utt.onsetAt).inMilliseconds} bytes=${utt.wav.length}');
+        if (utt.wakeOnly) {
+          // ZASTAVKA: faqat "Alomat" bilan BOSHLANGAN gap (davom-oynasi/buyruq/chuchkirish yo'q).
+          final cmd = text == null || !_valid(text) ? null : stripWakeWord(text, within: 1);
+          if (cmd == null || !attractGuard.onWake()) {
+            _release(t, spoke: false); // video/begona nutq — jim (serverga log ham yo'q)
+            continue;
+          }
+          _log('screensaver wake');
+          dismissAttract?.call(); // teginish bilan bir xil: zastavka yopiladi
+          await _handle(text!, t, fromAttract: true);
+          continue;
+        }
         if (_lastSttEvent == 'sneeze') {
           // CHUCHKIRISH aniqlandi (server YAMNet) — odob bilan "Sog' bo'ling!"
           await _speak(_blessYou(), turn: t);
@@ -511,10 +591,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   static const int _preOnsetMaxMs = 8000;
   static const int _preRollMs = 500; // nutq boshidan oldin saqlanadigan qism
   static const int _maxUttMs = 11000; // eng uzun gap
+  static const int _maxWakeUttMs = 6000; // zastavkada: "Alomat" + qisqa savol
   static const double _rmsMinDbfs = -48.0; // muvozanat: user ovozi yutilmasin, uzoq shovqin ham kirmasin
 
   Future<_Utt?> _capture() async {
     final path = '${Directory.systemTemp.path}${Platform.pathSeparator}kadastr_utt.wav';
+    var wakeOnly = _wakeOnlyNow();
     try {
       await _rec.start(
           const RecordConfig(
@@ -525,8 +607,14 @@ class VoiceController extends StateNotifier<VoiceUiState> {
               noiseSuppress: true,
               echoCancel: true),
           path: path);
-    } catch (_) {
-      await _sleep(600);
+      if (_recFails > 0) _log('recorder opened again after $_recFails failure(s)');
+      _recFails = 0;
+    } catch (e) {
+      // Qurilma tayyor emas (ilova ochilishi, USB mikrofon...) — backoff bilan qayta,
+      // har 600 ms da urinib logni to'ldirmaymiz.
+      _recFails++;
+      if (_recFails == 1) _log('recorder open failed: $e — retrying with backoff');
+      await Future<void>.delayed(_backoff(_recFails));
       return null;
     }
     final sw = Stopwatch()..start();
@@ -534,11 +622,13 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     var spoken = 0, silence = 0;
     var ampAlive = false, onset = false;
     var onsetMs = 0;
+    var hitMax = false;
     DateTime? onsetAt;
     while (_on && !_busy) {
       await _sleep(_pollMs);
       if (_manual || _manualStarting) return null; // tap-to-talk → mikrofon unga tegishli
-      if (canListen != null && !canListen!()) break; // /appeal, zastavka, intro → mikrofonni bo'shatamiz
+      if (!_listenAllowed()) break; // /appeal, face-enroll, intro, qo'riqchi → mikrofonni bo'shatamiz
+      if (!wakeOnly && _wakeOnlyNow()) wakeOnly = true; // zastavka yozuv o'rtasida ochildi
       double db = -160;
       try {
         db = (await _rec.getAmplitude()).current;
@@ -571,14 +661,21 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         } else {
           silence = 0;
         }
-        if (spoken >= _maxUttMs) break;
+        // Zastavkada gap qisqa bo'ladi ("Alomat, ..."); uzluksiz video ovozi cheklovga
+        // yetadi — u STT'ga yuborilmaydi (server yuklamasi).
+        if (spoken >= (wakeOnly ? _maxWakeUttMs : _maxUttMs)) {
+          hitMax = true;
+          break;
+        }
       }
     }
     if (_manual || _manualStarting) return null;
     await _stopRec();
     final endAt = DateTime.now();
     if (!_on || _busy) return null;
-    if (canListen != null && !canListen!()) return null;
+    if (!_listenAllowed()) return null;
+    if (_wakeOnlyNow()) wakeOnly = true;
+    if (wakeOnly && (hitMax || !onset)) return null; // zastavka: faqat aniq boshlanib-tugagan qisqa gap
     try {
       final raw = await File(path).readAsBytes();
       if (raw.length < 4000) return null; // juda qisqa
@@ -590,7 +687,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       final lv = wavLevels(wav);
       if (lv.$1 < _rmsMinDbfs) return null;
       if (lv.$2 - lv.$1 < 7.0 && lv.$1 < -30) return null;
-      return _Utt(wav, onsetAt ?? startedAt, endAt);
+      return _Utt(wav, onsetAt ?? startedAt, endAt, wakeOnly: wakeOnly);
     } catch (_) {
       return null;
     }
@@ -695,7 +792,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     return hit / aw.length >= 0.6; // so'zlarning 60%+ mos — aks-sado
   }
 
-  Future<void> _handle(String text, int t) async {
+  Future<void> _handle(String text, int t, {bool fromAttract = false}) async {
     state = state.copyWith(heard: text, suggest: false);
     final onAi = onAiPage?.call() ?? false;
     // HAMMA sahifada faqat ISM ("Alomat") bilan qabul qilinadi. Istisno: yolg'iz ism
@@ -715,6 +812,8 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
     _logHeard(text, acted: true);
     _lastEngaged = DateTime.now();
+    // Zastavkadan tashqari qabul qilingan gap — haqiqiy odam bor (qo'riqchi ketma-ketligi 0).
+    if (!fromAttract) attractGuard.onRealSpeech();
     ref.read(voiceActivityProvider.notifier).state++; // idle-taymerga "faollik" pulsi
     // Faqat ism: oldindan yuklangan audio bilan DARHOL javob (LLM/navigatsiya kutilmaydi).
     if (content.trim().length < 2) {
@@ -1132,8 +1231,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     state = state.copyWith(recording: false, phase: _on ? VoicePhase.listening : VoicePhase.off);
   }
 
+  bool _disposed = false;
+
   @override
   void dispose() {
+    _disposed = true;
+    _startRetry?.cancel();
     _on = false;
     _turn++;
     unawaited(_session?.cancel());

@@ -34,6 +34,9 @@ class MockVoiceServer {
   int streamAborted = 0; // klient oqimni o'rtada yopgan holatlar
   final List<Map<String, dynamic>> streamBodies = [];
 
+  /// /stt javoblari navbati (testlar uchun); bo'sh bo'lsa standart matn.
+  final List<String> sttScript = [];
+
   int get port => _server.port;
   String get origin => 'http://127.0.0.1:$port';
 
@@ -116,7 +119,7 @@ class MockVoiceServer {
         case '/api/v1/stt':
           await req.drain<void>();
           await Future<void>.delayed(const Duration(milliseconds: 300));
-          return _json(res, {'text': 'Alomat, auksion yerlar nechta'});
+          return _json(res, {'text': sttScript.isNotEmpty ? sttScript.removeAt(0) : 'Alomat, auksion yerlar nechta'});
         case '/api/v1/ai/heard':
         case '/api/v1/kiosk/ping':
           await req.drain<void>();
