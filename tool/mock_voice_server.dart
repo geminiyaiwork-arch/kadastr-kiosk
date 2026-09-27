@@ -37,6 +37,9 @@ class MockVoiceServer {
   /// /stt javoblari navbati (testlar uchun); bo'sh bo'lsa standart matn.
   final List<String> sttScript = [];
 
+  /// Shuncha keyingi /tts/synthesize so'rovi 502 qaytaradi (qayta urinish sinovi).
+  int ttsFail = 0;
+
   /// Har /stt so'rovi: (mode parametri, tana hajmi baytda).
   final List<(String?, int)> sttRequests = [];
 
@@ -112,6 +115,11 @@ class MockVoiceServer {
             'persona': mode == 'persona',
           });
         case '/api/v1/tts/synthesize':
+          if (ttsFail > 0) {
+            ttsFail--;
+            res.statusCode = 502;
+            return _json(res, {'error': 'bad gateway'});
+          }
           final text = req.uri.queryParameters['text'] ?? '';
           await Future<void>.delayed(const Duration(milliseconds: 120));
           final mp3 = _audioFor(text);

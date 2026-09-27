@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:record/record.dart';
 
@@ -286,11 +287,32 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
   }
 
+  bool _primeNeeded = false;
+
+  /// Tayyor iboralar yuklanmagan bo'lsa (startda tarmoq yo'q edi) — keyingi muvaffaqiyatli
+  /// tarmoq so'rovidan keyin qayta urinadi.
+  void _maybeRetryPrime() {
+    if (_primeNeeded && _on) {
+      _primeNeeded = false;
+      _log('retrying phrase prefetch after network recovered');
+      unawaited(_primePhrases());
+    }
+  }
+
+  /// Test/diagnostika: wake + filler iboralari keshlanganmi (joriy til/ovoz).
+  @visibleForTesting
+  bool get phrasesReady {
+    final v = _knownVoice() ?? 'madina';
+    final list = [_wakeText(_lang), if (Env.fillerEnabled) ...(_fillers[_lang] ?? _fillers['uz']!)];
+    return list.every((t) => _phraseAudio['$_lang|$v|$t'] != null);
+  }
+
   Future<void> _primePhrases() async {
     final lang = _lang;
     final voice = await _voiceWait(2000);
     if (!_on) return;
     final wake = await _loadPhrase(lang, voice, _wakeText(lang));
+    if (wake == null) _primeNeeded = true;
     final clips = _clips;
     if (wake != null && !_warmedPlayer && clips is AudioClipPlayer) {
       _warmedPlayer = true;
@@ -298,7 +320,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
     if (Env.fillerEnabled) {
       for (final f in _fillers[lang] ?? _fillers['uz']!) {
-        unawaited(_loadPhrase(lang, voice, f));
+        unawaited(_loadPhrase(lang, voice, f).then((b) {
+          if (b == null) _primeNeeded = true;
+        }));
       }
     }
   }
@@ -414,6 +438,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   int _takeOver() {
     _busy = true;
     unawaited(_cancelTurn());
+    // eski ovoz to'xtatildi — "gapiryapti" holati ham tozalanadi (avval tap-to-talk
+    // yozuvida ham avatar "gapiryapti" nurida qolardi)
+    if (state.speaking) state = state.copyWith(speaking: false);
     return _turn;
   }
 
@@ -591,7 +618,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
             if (full != null && _valid(full) && stripWakeWord(full, within: 1) != null) text = full;
           }
           dismissAttract?.call(); // teginish bilan bir xil: zastavka yopiladi
-          await _handle(text!, t, fromAttract: true);
+          final answered = await _handle(text!, t, fromAttract: true);
+          // Uyg'onish gapidagi savolga MAZMUNLI javob berildi — haqiqiy odam (video emas).
+          if (answered) attractGuard.onRealSpeech();
           continue;
         }
         if (_lastSttEvent == 'sneeze') {
@@ -722,7 +751,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (!_on || _busy) return null;
     if (!_listenAllowed()) return null;
     if (_wakeOnlyNow()) wakeOnly = true;
-    if (wakeOnly && (hitMax || !onset)) return null; // zastavka: faqat aniq boshlanib-tugagan qisqa gap
+    // Zastavka: nutq boshi bo'lmasa — yuborilmaydi. 6s cheklovga yetgan (uzluksiz) gap ham
+    // yuboriladi — lekin faqat birinchi 2.5s (`mode=wake`); yuklamani duty-cycle cheklaydi.
+    if (wakeOnly && !onset) return null;
+    if (hitMax) _log('utterance hit the ${wakeOnly ? _maxWakeUttMs : _maxUttMs} ms cap');
     try {
       final raw = await File(path).readAsBytes();
       if (raw.length < 4000) return null; // juda qisqa
@@ -774,6 +806,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
             options: Options(contentType: 'application/octet-stream', headers: {Headers.contentLengthHeader: bytes.length}),
           );
           _lastNet = DateTime.now();
+          _maybeRetryPrime();
           final m = Map<String, dynamic>.from(r.data as Map);
           if (m['error'] != null) return null;
           _lastSttEvent = (m['event'] ?? '').toString();
@@ -825,6 +858,16 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     final end = _spokeEndAt;
     if (_lastSpokenNorm.isEmpty || end == null) return false;
     if (onsetAt.difference(end).inMilliseconds > Env.echoWindowMs) return false;
+    // ISM bilan boshlangan gap: AI o'zi ismni aytmagan bo'lsa — bu aks-sado bo'lishi
+    // MUMKIN EMAS (avval "Alomat, Andijon tumanida auksion qachon?" javobdagi so'zlar
+    // bilan 60% mos kelib, haqiqiy davom-savol tashlab yuborilardi). Aytgan bo'lsa —
+    // faqat ismdan keyingi qism tekshiriladi.
+    final afterWake = stripWakeWord(text, within: 1);
+    if (afterWake != null) {
+      final spokeName = _lastSpokenNorm.split(' ').any(isWakeToken);
+      if (!spokeName) return false;
+      if (afterWake.isNotEmpty) text = afterWake;
+    }
     final a = _normTxt(text);
     if (a.length < 8) {
       // Qisqa bo'lak (masalan "Alomat" — javobda ism tilga olingan) — butun so'z sifatida
@@ -839,7 +882,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     return hit / aw.length >= 0.6; // so'zlarning 60%+ mos — aks-sado
   }
 
-  Future<void> _handle(String text, int t, {bool fromAttract = false}) async {
+  /// Test: [text] hozir (AI gapirib bo'lgач) eshitilsa aks-sado deb tashlanadimi.
+  @visibleForTesting
+  bool debugIsEcho(String text) => _isEcho(text, DateTime.now());
+
+  /// true = savolga mazmunli javob berildi (zastavka qo'riqchisi uchun).
+  Future<bool> _handle(String text, int t, {bool fromAttract = false}) async {
     state = state.copyWith(heard: text, suggest: false);
     final onAi = onAiPage?.call() ?? false;
     // HAMMA sahifada faqat ISM ("Alomat") bilan qabul qilinadi. Istisno: yolg'iz ism
@@ -855,7 +903,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     } else {
       _logHeard(text, acted: false); // eshitildi, lekin ism yo'q — E'TIBORSIZ
       _release(t, spoke: false);
-      return;
+      return false;
     }
     _logHeard(text, acted: true);
     _lastEngaged = DateTime.now();
@@ -871,20 +919,20 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       }
       await _speak(_labbay(), turn: t, quietMs: Env.wakeAckQuietMs);
       if (t == _turn) _followUntil = DateTime.now().add(const Duration(seconds: 15));
-      return;
+      return false;
     }
     // "MENI ESLAB QOL" — yuz-ro'yxat (kamera) ekrani ochiladi (1.9.36)
     if (_enrollIntent(content)) {
       await stopSpeaking();
       navTo?.call('/face-enroll');
-      return;
+      return true;
     }
     // OVOZLI SAHIFA-NAVIGATSIYA — faqat ANIQ "och/kir/bo'limi" buyrug'ida, JIM o'tadi.
     final route = _matchRoute(content);
     if (route != null && navTo != null && _openCmd(content)) {
       navTo!(route);
       _release(t, spoke: false);
-      return;
+      return true;
     }
     // AI savol. Boshqa sahifadan kelsa: eski javob tozalanadi va AI sahifaga o'tiladi —
     // savol SHU ZAHOTI yuboriladi (avval 300 ms kutilardi; sahifa intro/greet/reset
@@ -894,7 +942,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       _voiceEntryAt = DateTime.now();
       navToAi?.call();
     }
-    await _answer(content, t);
+    return _answer(content, t);
   }
 
   /// AI sahifasida sahifaga o'tish uchun ANIQ buyruq kerak: "…sahifasini och" va h.k.
@@ -1034,8 +1082,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   }
 
   /// Savolni yuboradi va javobni OQIM bilan gapiradi (0-jumla kelishi bilan ovoz).
-  Future<void> _answer(String q, int t) async {
-    if (t != _turn) return;
+  /// true = mazmunli javob berildi (bo'sh/topilmadi/mavzudan tashqari/bekor EMAS).
+  Future<bool> _answer(String q, int t) async {
+    if (t != _turn) return false;
     _busy = true;
     _qActive = true;
     _lastEngaged = DateTime.now();
@@ -1078,6 +1127,16 @@ class VoiceController extends StateNotifier<VoiceUiState> {
           state = state.copyWith(answer: txt, table: table, clearTable: table == null);
         }
       },
+      personaVideo: (text) async {
+        // 1.9.47 xulqi: persona javobi uchun tayyor lab-sinx video bo'lsa — o'sha.
+        if (t != _turn) return false;
+        state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
+        final ok = await ref.read(avatarPlayerProvider.notifier).speak(
+            ref.read(avatarProvider).valueOrNull, text, lang,
+            voice: ttsVoice, cachedOnly: !Env.generateSpeechVideo);
+        if (t == _turn && !ok) state = state.copyWith(speaking: false);
+        return ok;
+      },
       onClipStart: (c) {
         if (t != _turn) return;
         if (firstAudioMs < 0) {
@@ -1093,7 +1152,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     final res = await session.run();
     if (identical(_session, session)) _session = null;
     _lastNet = DateTime.now();
-    if (t != _turn || res.cancelled) return; // bekor qilindi — egasi boshqa
+    if (t != _turn || res.cancelled) return false; // bekor qilindi — egasi boshqa
     _lastSpokenNorm = _normTxt(session.spokenText);
     final snd = _firstSoundAt;
     final soundMs = snd == null ? -1 : snd.difference(askedAt).inMilliseconds;
@@ -1105,9 +1164,12 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       final fb = _fallback();
       state = state.copyWith(answer: fb, clearTable: true);
       await _speak(fb, turn: t);
-      return;
+      return false;
     }
-    _release(t);
+    // video tugashi ~0.15s oldin aniqlanadi — aks-sado oynasi biroz uzunroq
+    _release(t, quietMs: session.personaVideoPlayed ? Env.echoQuietMs + 600 : null);
+    _maybeRetryPrime();
+    return res.out['notFound'] != true && res.out['offDomain'] != true && res.text.trim().isNotEmpty;
   }
 
   /// Telefon ovozli pultdan kelgan buyruq (QR orqali) — wake-word shart emas.
@@ -1233,10 +1295,15 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (text == _wakeText(lang)) return _loadPhrase(lang, voice, text);
     final timer = Stopwatch()..start();
     try {
-      final r = await _dio.get<List<int>>('/tts/synthesize',
-          queryParameters: {'text': text, 'voice': voice, 'lang': lang},
-          cancelToken: ct,
-          options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 25)));
+      // Eski yo'lda (server yangilanguncha) har jumla shu yerdan: eskirgan ulanish yoki
+      // 502-504 bo'lsa BIR MARTA qayta (1.9.47 UrlSource fallback'i o'rniga — o'sha yangi
+      // ulanish; avval null → jumla jim tashlab ketilardi).
+      final r = await withNetRetry(
+          () => _dio.get<List<int>>('/tts/synthesize',
+              queryParameters: {'text': text, 'voice': voice, 'lang': lang},
+              cancelToken: ct,
+              options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 25))),
+          within: const Duration(seconds: 8));
       final d = r.data;
       if (d == null || d.length < 200) return null;
       return d is Uint8List ? d : Uint8List.fromList(d);

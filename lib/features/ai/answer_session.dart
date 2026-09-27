@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show HttpException, IOException;
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -62,6 +63,35 @@ ChatStreamEvent? parseChatStreamEvent(Map<String, dynamic> m) {
   }
 }
 
+/// Eskirgan keep-alive ulanish / tarmoq uzilishi / vaqtinchalik proksi xatosi (502-504) —
+/// bir marta DARHOL qayta urinish mantiqli (yangi ulanish ochiladi).
+bool isRetryableNetError(Object e) {
+  if (e is! DioException) return false;
+  switch (e.type) {
+    case DioExceptionType.connectionError:
+      return true;
+    case DioExceptionType.unknown:
+      return e.error is IOException || e.error is HttpException;
+    case DioExceptionType.badResponse:
+      final c = e.response?.statusCode ?? 0;
+      return c == 502 || c == 503 || c == 504;
+    default:
+      return false;
+  }
+}
+
+/// [f] ni bajaradi; tez (≤[within]) sodir bo'lgan qayta-urinsa-bo'ladigan tarmoq xatosida
+/// BIR MARTA qayta urinadi.
+Future<T> withNetRetry<T>(Future<T> Function() f, {Duration within = const Duration(seconds: 4)}) async {
+  final sw = Stopwatch()..start();
+  try {
+    return await f();
+  } catch (e) {
+    if (!isRetryableNetError(e) || sw.elapsed > within) rethrow;
+    return f();
+  }
+}
+
 /// Server bu endpointni bilmaydi (eski server: 404/405/501) — sessiya davomida eslab qolinadi.
 class ChatStreamUnsupported implements Exception {
   const ChatStreamUnsupported(this.status);
@@ -91,17 +121,19 @@ Future<Stream<ChatStreamEvent>> openChatStream(
 }) async {
   final Response<ResponseBody> r;
   try {
-    r = await dio.post<ResponseBody>(
-      '/ai/chat-stream',
-      data: {'q': q, 'lang': lang, if (voice != null && voice.isNotEmpty) 'voice': voice},
-      cancelToken: cancelToken,
-      options: Options(
-        responseType: ResponseType.stream,
-        validateStatus: (_) => true,
-        receiveTimeout: headersTimeout, // javob SARLAVHASI kelguncha (tana oqimi alohida)
-        headers: {'Accept': 'application/x-ndjson'},
-      ),
-    );
+    // eskirgan keep-alive ulanishda bir marta darhol qayta (aks holda shu savol fallback'ga
+    // tushib qo'shimcha round-trip to'lardi)
+    r = await withNetRetry(() => dio.post<ResponseBody>(
+          '/ai/chat-stream',
+          data: {'q': q, 'lang': lang, if (voice != null && voice.isNotEmpty) 'voice': voice},
+          cancelToken: cancelToken,
+          options: Options(
+            responseType: ResponseType.stream,
+            validateStatus: (_) => true,
+            receiveTimeout: headersTimeout, // javob SARLAVHASI kelguncha (tana oqimi alohida)
+            headers: {'Accept': 'application/x-ndjson'},
+          ),
+        ));
   } on DioException catch (e) {
     if (e.type == DioExceptionType.cancel) rethrow;
     throw ChatStreamFailed('${e.type.name}: ${e.message ?? e.error}');
@@ -186,6 +218,7 @@ class AnswerSession {
     this.log,
     this.chatTimeout = const Duration(seconds: 20),
     this.streamIdleTimeout = const Duration(seconds: 12),
+    this.personaVideo,
   });
 
   final Dio dio;
@@ -208,6 +241,12 @@ class AnswerSession {
 
   /// Oqimda ikki hodisa orasidagi eng uzun jimlik (server har ~5s `ping` yuboradi).
   final Duration streamIdleTimeout;
+
+  /// Persona javobi (eski yo'l yoki `say`siz `done`): tayyor (keshlangan) lab-sinx video
+  /// bo'lsa shuni o'ynatadi (true = o'ynaldi, TTS kerak emas). 1.9.47 xulqi.
+  final Future<bool> Function(String text)? personaVideo;
+  bool _personaVideoPlayed = false;
+  bool get personaVideoPlayed => _personaVideoPlayed;
 
   final CancelToken _cancel = CancelToken();
   // Oqim uchun ALOHIDA token: xato/timeout bo'lsa soket darhol yopiladi (obunani bekor
@@ -346,8 +385,23 @@ class AnswerSession {
       // parallel yuklanadi (server prewarm bilan bir xil bo'linish → kesh mos).
       final clean = full.replaceAll(RegExp(r'<[^>]+>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
       final sp = clean.length > 800 ? clean.substring(0, 800) : clean;
-      final (head, tail) = splitHeadTail(sp);
       _addSpoken(sp);
+      final pv = personaVideo;
+      if (persona && pv != null && !queue.startedReal && !queue.isPlaying) {
+        _fillerTimer?.cancel();
+        var ok = false;
+        try {
+          ok = await pv(sp);
+        } catch (_) {}
+        if (_cancelled) return _result('', null, false, const {}, path, true);
+        if (ok) {
+          _personaVideoPlayed = true;
+          queue.close();
+          await queue.done;
+          return _result(full, table, persona, o, path, _cancelled);
+        }
+      }
+      final (head, tail) = splitHeadTail(sp);
       queue.add(0, head, fetchTts(head));
       if (tail != null) queue.add(1, tail, fetchTts(tail));
     }
@@ -359,12 +413,12 @@ class AnswerSession {
 
   Future<Map<String, dynamic>?> _fallbackChat() async {
     try {
-      final r = await dio.post(
-        '/ai/chat',
-        data: {'q': q, 'lang': lang},
-        cancelToken: _cancel,
-        options: Options(receiveTimeout: chatTimeout),
-      );
+      final r = await withNetRetry(() => dio.post(
+            '/ai/chat',
+            data: {'q': q, 'lang': lang},
+            cancelToken: _cancel,
+            options: Options(receiveTimeout: chatTimeout),
+          ));
       final d = r.data;
       if (d is Map) return Map<String, dynamic>.from(d);
       if (d is String && d.isNotEmpty) {

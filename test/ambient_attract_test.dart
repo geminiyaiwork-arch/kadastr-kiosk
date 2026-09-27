@@ -116,11 +116,26 @@ void main() {
       now = now.add(const Duration(seconds: 331));
       expect(g.onWake(), isTrue); // 3rd is handled, then listening is switched off
       expect(g.blocked, isTrue);
-      now = now.add(const Duration(minutes: 30));
-      expect(g.onWake(), isFalse); // time alone does not unblock
+      now = now.add(const Duration(minutes: 20));
+      expect(g.onWake(), isFalse); // still blocked (auto-expiry is 30 min)
       g.onTouch();
       expect(g.blocked, isFalse);
       expect(g.onWake(), isTrue);
+    });
+
+    test('block auto-expires after 30 min even without a touch', () {
+      var now = DateTime(2026, 9, 27, 10);
+      final g = AttractWakeGuard(clock: () => now);
+      for (var i = 0; i < 3; i++) {
+        if (i > 0) now = now.add(const Duration(minutes: 5));
+        g.onWake();
+      }
+      expect(g.blocked, isTrue); // blocked at the 3rd wake
+      now = now.add(const Duration(minutes: 29));
+      expect(g.blocked, isTrue);
+      now = now.add(const Duration(minutes: 2));
+      expect(g.blocked, isFalse);
+      expect(g.streak, 0);
     });
 
     test('real follow-up speech or a >10 min gap resets the streak', () {
@@ -334,6 +349,18 @@ void main() {
       expect(vc.consumeVoiceEntry(), isTrue);
       expect(server.streamBodies.single['q'], 'auksion yerlar nechta');
       expect(player.played, [0, 1, 2]);
+      // a real question in the wake utterance that got a meaningful answer confirms the wake
+      await _until(() => !vc.busy);
+      await _until(() => vc.attractGuard.streak == 0, ms: 1000);
+    });
+
+    test('screensaver utterance hitting the 6 s cap is still checked (first 2.5 s, mode=wake)', () async {
+      server.sttScript.add('Alomat');
+      rec.speak(ms: 7000);
+      await _until(() => dismissals == 1, ms: 12000);
+      final (mode, size) = server.sttRequests.first;
+      expect(mode, 'wake');
+      expect(size, lessThanOrEqualTo(maxClip));
     });
 
     test('bare "Alomat" → dismissed + cached "Labbay! Eshitaman." + follow-up without the name', () async {

@@ -27,7 +27,7 @@ class UpdateService {
 
   /// [canInstall] — hozir o'rnatsa bo'ladimi (faol foydalanuvchini uzmaslik uchun).
   /// null yoki true qaytarsa darhol o'rnatadi; false qaytarsa — bu safar o'tkazadi.
-  static Future<void> check({bool Function()? canInstall}) async {
+  static Future<void> check({bool Function()? canInstall, Future<void> Function()? beforeInstall}) async {
     if ((!Platform.isWindows && !Platform.isLinux) || _busy) return;
     String latest = '', exe = '', deb = '';
     bool enabled = true;
@@ -51,7 +51,7 @@ class UpdateService {
     // keyingi (15 daqiqalik) tekshiruv yoki zastavkaga o'tganda o'rnatadi.
     if (canInstall != null && !canInstall()) return;
     if (latest == _attemptedVer) { _attemptCount++; } else { _attemptedVer = latest; _attemptCount = 1; }
-    await _install(pkgUrl, latest);
+    await _install(pkgUrl, latest, canInstall: canInstall, beforeInstall: beforeInstall);
   }
 
   /// a > b (X.Y.Z semver taqqoslash)
@@ -65,56 +65,68 @@ class UpdateService {
     return false;
   }
 
-  static Future<void> _install(String pkgUrl, String v) async {
+  static Future<void> _install(String pkgUrl, String v,
+      {bool Function()? canInstall, Future<void> Function()? beforeInstall}) async {
     _busy = true;
-    // So'ramaymiz, lekin ekranда qisqa "Yangilanmoqda…" ko'rsatamiz (fuqaro tushunsin).
-    final ctx = rootNavigatorKey.currentContext;
-    if (ctx != null && ctx.mounted) {
-      showDialog(
-        context: ctx,
-        barrierDismissible: false,
-        builder: (_) => const AlertDialog(
-          content: Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              SizedBox(width: 34, height: 34, child: CircularProgressIndicator(strokeWidth: 3)),
-              SizedBox(width: 22),
-              Flexible(child: Text('Yangi versiya o‘rnatilmoqda…', style: TextStyle(fontSize: 18))),
-            ]),
-          ),
-        ),
-      );
-    }
+    var dialogShown = false;
+    var windowChanged = false;
     try {
+      final tmp = Platform.isWindows
+          ? '${Directory.systemTemp.path}\\kadastr-kiosk-setup-$v.exe'
+          : '${Directory.systemTemp.path}/kadastr-kiosk-$v.deb';
+      // 1) JIM yuklab olish — dialog YO'Q (avval "o'rnatilmoqda" oynasi yuklash davomida,
+      //    ≤15 daqiqa, ekranni to'sib turardi).
+      await Dio().download(pkgUrl, tmp, options: Options(receiveTimeout: const Duration(minutes: 15)));
+      // Yuklab olingan fayl BUTUNLIGI: yarim/buzuq yuklansa o'rnatgichni ISHGA TUSHIRMAYMIZ
+      // (aks holda exit(0) qilib kioskни o'lik qoldirardi). Setup ~20MB → <3MB = buzuq.
+      if (await File(tmp).length() < 3 * 1024 * 1024) throw Exception('paket fayli buzuq/yarim yuklandi');
+      // 2) Yuklash davomida odam kelgan bo'lishi mumkin — QAYTA tekshiramiz (1.9.48).
+      //    Hozir mumkin bo'lmasa — bu urinish hisoblanmaydi, keyingi tekshiruvda qaytadan.
+      if (canInstall != null && !canInstall()) {
+        if (_attemptCount > 0) _attemptCount--;
+        _busy = false;
+        return;
+      }
+      // 3) Ovoz/mikrofon to'xtaydi — o'rnatish paytida gapirmasin/tinglamasin.
+      try {
+        await beforeInstall?.call();
+      } catch (_) {}
+      // So'ramaymiz, lekin ekranda qisqa "Yangilanmoqda…" ko'rsatamiz (fuqaro tushunsin).
+      final ctx = rootNavigatorKey.currentContext;
+      if (ctx != null && ctx.mounted) {
+        dialogShown = true;
+        showDialog(
+          context: ctx,
+          barrierDismissible: false,
+          builder: (_) => const AlertDialog(
+            content: Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                SizedBox(width: 34, height: 34, child: CircularProgressIndicator(strokeWidth: 3)),
+                SizedBox(width: 22),
+                Flexible(child: Text('Yangi versiya o‘rnatilmoqda…', style: TextStyle(fontSize: 18))),
+              ]),
+            ),
+          ),
+        );
+      }
+      // MUHIM: UAC (ruxsat) oynasi TO'LIQ-EKRAN kiosk ORQASIDA qolib, yangilanish
+      // hech qachon boshlanmasdi! O'rnatishdan oldin kiosk kichrayadi — UAC ko'rinadi.
+      try {
+        windowChanged = true;
+        await windowManager.setAlwaysOnTop(false);
+        await windowManager.setFullScreen(false);
+        await windowManager.minimize();
+      } catch (_) {}
       if (Platform.isWindows) {
-        final tmp = '${Directory.systemTemp.path}\\kadastr-kiosk-setup-$v.exe';
-        await Dio().download(pkgUrl, tmp, options: Options(receiveTimeout: const Duration(minutes: 15)));
-        // Yuklab olingan fayl BUTUNLIGI: yarim/buzuq yuklansa o'rnatgichni ISHGA TUSHIRMAYMIZ
-        // (aks holda exit(0) qilib kioskни o'lik qoldirardi). Setup ~20MB → <3MB = buzuq.
-        if (await File(tmp).length() < 3 * 1024 * 1024) throw Exception('setup fayli buzuq/yarim yuklandi');
-        // MUHIM: UAC (ruxsat) oynasi TO'LIQ-EKRAN kiosk ORQASIDA qolib, yangilanish
-        // hech qachon boshlanmasdi! O'rnatishdan oldin kiosk kichrayadi — UAC ko'rinadi.
-        try {
-          await windowManager.setAlwaysOnTop(false);
-          await windowManager.setFullScreen(false);
-          await windowManager.minimize();
-        } catch (_) {}
         // /SILENT: kichik jarayon-oynasi ko'rinadi; [Run] postinstall kioskни QAYTA ochadi.
         await Process.start(tmp, ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'],
             mode: ProcessStartMode.detached);
         await Future.delayed(const Duration(seconds: 1));
         exit(0); // dastur o'zini yopadi — o'rnatgich davom etadi
       } else {
-        // LINUX: deb'ни yuklab, pkexec (grafik parol-oyna) bilan o'rnatamiz,
-        // so'ng yangi versiyani ishga tushirib, o'zimizni yopamiz.
-        final tmp = '${Directory.systemTemp.path}/kadastr-kiosk-$v.deb';
-        await Dio().download(pkgUrl, tmp, options: Options(receiveTimeout: const Duration(minutes: 15)));
-        if (await File(tmp).length() < 3 * 1024 * 1024) throw Exception('deb fayli buzuq/yarim yuklandi');
-        try {
-          await windowManager.setAlwaysOnTop(false);
-          await windowManager.setFullScreen(false);
-          await windowManager.minimize();
-        } catch (_) {}
+        // LINUX: pkexec (grafik parol-oyna) bilan o'rnatamiz, so'ng yangi versiyani ishga
+        // tushirib, o'zimizni yopamiz.
         final r = await Process.run('pkexec', ['dpkg', '-i', tmp]);
         if (r.exitCode == 0) {
           await Process.start('/usr/bin/kadastr-kiosk', [], mode: ProcessStartMode.detached);
@@ -126,11 +138,13 @@ class UpdateService {
     } catch (_) {
       _busy = false;
       final c = rootNavigatorKey.currentContext;
-      if (c != null && c.mounted) Navigator.of(c, rootNavigator: true).maybePop();
-      try {
-        await windowManager.setFullScreen(true);
-        await windowManager.setAlwaysOnTop(true);
-      } catch (_) {}
+      if (dialogShown && c != null && c.mounted) Navigator.of(c, rootNavigator: true).maybePop();
+      if (windowChanged) {
+        try {
+          await windowManager.setFullScreen(true);
+          await windowManager.setAlwaysOnTop(true);
+        } catch (_) {}
+      }
     }
   }
 }
@@ -167,8 +181,14 @@ class _UpdateHostState extends ConsumerState<UpdateHost> {
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(seconds: 12), () => UpdateService.check(canInstall: _canInstall));
-    _t = Timer.periodic(const Duration(minutes: 15), (_) => UpdateService.check(canInstall: _canInstall));
+    Future.delayed(const Duration(seconds: 12), _check);
+    _t = Timer.periodic(const Duration(minutes: 15), (_) => _check());
+  }
+
+  Future<void> _check() {
+    if (!mounted) return Future.value();
+    final voice = ref.read(voiceProvider.notifier);
+    return UpdateService.check(canInstall: _canInstall, beforeInstall: voice.stop);
   }
 
   @override

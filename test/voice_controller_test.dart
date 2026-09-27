@@ -7,6 +7,7 @@ import 'package:kadastr_kiosk/core/network/repository.dart';
 import 'package:kadastr_kiosk/features/ai/voice_controller.dart';
 
 import '../tool/mock_voice_server.dart';
+import 'ambient_attract_test.dart' show FakeRecorder;
 import 'speech_queue_test.dart' show FakeClipPlayer;
 
 Future<void> _until(bool Function() cond, {int ms = 5000}) async {
@@ -24,15 +25,17 @@ void main() {
   late ProviderContainer c;
   late FakeClipPlayer player;
   late VoiceController vc;
+  late FakeRecorder rec;
 
   setUp(() async {
     server = await MockVoiceServer.start();
     player = FakeClipPlayer(clipMs: 60);
+    rec = FakeRecorder();
     final dio = Dio(BaseOptions(baseUrl: '${server.origin}/api/v1'));
     c = ProviderContainer(overrides: [
       dioProvider.overrideWithValue(dio),
       avatarProvider.overrideWith((ref) async => const AvatarConfig()),
-      voiceProvider.overrideWith((ref) => VoiceController(ref, player: player)),
+      voiceProvider.overrideWith((ref) => VoiceController(ref, player: player, recorder: rec)),
     ]);
     await c.read(avatarProvider.future);
     vc = c.read(voiceProvider.notifier);
@@ -130,6 +133,51 @@ void main() {
     await f;
     expect(player.played, [0, 1, 2]);
     expect(server.hits['/api/v1/tts/synthesize'], isNull);
+  });
+
+  test('echo filter: a wake-word follow-up that repeats answer words is NOT echo', () async {
+    await vc.askAI('auksion yerlar nechta');
+    // just spoke "... Eng ko‘pi — Qo‘rg‘ontepa tumanida, 1 812 ta. ..."
+    expect(vc.debugIsEcho('Alomat, Qo‘rg‘ontepa tumanida auksion yerlar qachon?'), isFalse);
+    expect(vc.debugIsEcho('Eng ko‘pi Qo‘rg‘ontepa tumanida 1 812 ta'), isTrue); // real echo
+    expect(vc.debugIsEcho('Qo‘rg‘ontepa tumanida 1 812 ta auksion'), isTrue); // no name → still filtered
+  });
+
+  test('echo filter: if the AI itself said the name, the part after it is still checked', () async {
+    server.mode = 'persona'; // "Mening ismim Alomat. Sizga qanday yordam bera olaman?"
+    await vc.askAI('isming nima');
+    expect(vc.debugIsEcho('Alomat'), isTrue);
+    expect(vc.debugIsEcho('Alomat sizga qanday yordam bera olaman'), isTrue);
+    expect(vc.debugIsEcho('Alomat, auksion yerlar nechta'), isFalse);
+  });
+
+  test('fallback path: TTS 502 is retried once (sentence not silently dropped)', () async {
+    server.mode = '404';
+    server.ttsFail = 2; // head and tail both fail on the first try
+    await vc.askAI('x');
+    expect(player.played, [0, 1]);
+  });
+
+  test('tap-to-talk while an answer plays: audio stops and "speaking" is cleared', () async {
+    final f = vc.askAI('x');
+    await _until(() => c.read(voiceProvider).speaking);
+    await vc.toggleTalk();
+    await f.timeout(const Duration(seconds: 2));
+    final st = c.read(voiceProvider);
+    expect(st.recording, isTrue);
+    expect(st.speaking, isFalse);
+    await vc.cancelTalk();
+    expect(c.read(voiceProvider).recording, isFalse);
+  });
+
+  test('phrase prefetch that failed at start is retried after the next successful request', () async {
+    server.ttsFail = 3; // wake + 2 fillers fail at startup
+    await vc.startAmbient(lang: 'uz', onAiPage: () => true, canListen: () => false, navToAi: () {}, navTo: (_) {});
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    expect(vc.phrasesReady, isFalse);
+    await vc.askAI('x'); // network works again
+    await _until(() => vc.phrasesReady);
+    await vc.stop();
   });
 
   test('remote/voice question from another page: navigates once, flags voice entry', () async {

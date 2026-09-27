@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -179,6 +180,84 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 1200));
     expect(p.played, [0]); // nothing stale plays later
     expect(server.streamAborted, greaterThanOrEqualTo(1));
+  });
+
+  test('stale keep-alive connection on /ai/chat-stream is retried once (no fallback)', () async {
+    var failed = 0;
+    dio.interceptors.add(InterceptorsWrapper(onRequest: (o, h) {
+      if (o.path == '/ai/chat-stream' && failed == 0) {
+        failed++;
+        return h.reject(DioException(
+            requestOptions: o, type: DioExceptionType.unknown, error: const SocketException('Connection reset by peer')));
+      }
+      h.next(o);
+    }));
+    final p = FakeClipPlayer(clipMs: 10);
+    final res = await session(p).run();
+    expect(failed, 1);
+    expect(res.path, 'stream');
+    expect(server.hits['/api/v1/ai/chat-stream'], 1);
+    expect(server.hits['/api/v1/ai/chat'], isNull);
+  });
+
+  test('withNetRetry retries only retryable, fast errors', () async {
+    var n = 0;
+    final ok = await withNetRetry(() async {
+      if (n++ == 0) {
+        throw DioException(requestOptions: RequestOptions(), type: DioExceptionType.connectionError);
+      }
+      return 42;
+    });
+    expect(ok, 42);
+    n = 0;
+    await expectLater(
+        withNetRetry(() async {
+          n++;
+          throw DioException(
+              requestOptions: RequestOptions(),
+              type: DioExceptionType.badResponse,
+              response: Response(requestOptions: RequestOptions(), statusCode: 400));
+        }),
+        throwsA(isA<DioException>()));
+    expect(n, 1); // 4xx is not retried
+  });
+
+  test('fallback persona answer plays the cached lip-sync video instead of TTS', () async {
+    server.mode = 'persona';
+    String? videoText;
+    final p = FakeClipPlayer(clipMs: 10);
+    final s = AnswerSession(
+      dio: dio,
+      player: p,
+      q: 'isming nima',
+      lang: 'uz',
+      useStream: false,
+      fetchTts: (t) async => MockVoiceServer.fakeMp3(t),
+      personaVideo: (t) async {
+        videoText = t;
+        return true;
+      },
+    );
+    final res = await s.run();
+    expect(res.persona, isTrue);
+    expect(s.personaVideoPlayed, isTrue);
+    expect(videoText, startsWith('Auksion yerlar'));
+    expect(p.played, isEmpty);
+
+    // no cached video → normal TTS
+    final p2 = FakeClipPlayer(clipMs: 10);
+    final s2 = AnswerSession(
+      dio: dio,
+      player: p2,
+      q: 'isming nima',
+      lang: 'uz',
+      useStream: false,
+      fetchTts: (t) async => MockVoiceServer.fakeMp3(t),
+      personaVideo: (t) async => false,
+    );
+    await s2.run();
+    expect(s2.personaVideoPlayed, isFalse);
+    expect(p2.played, [0, 1]);
   });
 
   test('persona flag is reported from done', () async {
