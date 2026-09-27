@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../env.dart';
+import '../../features/ai/voice_controller.dart';
 import '../../router.dart';
 
 /// Kiosk avto-yangilanish manifesti (portal). Format: {"version":"1.6.1","exe":"https://.../setup.exe","notes":"..."}
@@ -146,13 +147,20 @@ class UpdateHost extends ConsumerStatefulWidget {
 class _UpdateHostState extends ConsumerState<UpdateHost> {
   Timer? _t;
 
-  // Hozir o'rnatsa bo'ladimi? Zastavkada (attract) yoki hech narsa bilan band emas bo'lsa — ha.
+  DateTime _lastTouch = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // Hozir o'rnatsa bo'ladimi? Zastavkada (attract) — ha. Aks holda: hech narsa band
+  // emas VA foydalanuvchi bilan muloqot yo'q (1.9.48: avval AI bilan gaplashib turgan
+  // odamning suhbati o'rtasida ham o'rnatib, ilovani yopib yuborardi — kioskBusy faqat
+  // video/murojaatni sanaydi, ovozli suhbat va ekranga teginishni emas).
   bool _canInstall() {
     try {
-      if (ref.read(attractProvider)) return true;      // zastavkada — eng xavfsiz payt
-      return ref.read(kioskBusyProvider) == 0;          // murojaat/video yozilmayotgan bo'lsa
+      if (ref.read(attractProvider)) return true; // zastavkada — eng xavfsiz payt
+      if (ref.read(kioskBusyProvider) != 0) return false; // murojaat/video
+      if (ref.read(voiceProvider.notifier).engaged) return false; // ovozli suhbat (≤90s)
+      return DateTime.now().difference(_lastTouch).inSeconds >= 120; // ekran 2 daqiqa tinch
     } catch (_) {
-      return true;
+      return false;
     }
   }
 
@@ -170,5 +178,9 @@ class _UpdateHostState extends ConsumerState<UpdateHost> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) => Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _lastTouch = DateTime.now(),
+        child: widget.child,
+      );
 }

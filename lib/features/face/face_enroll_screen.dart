@@ -43,21 +43,26 @@ class _FaceEnrollScreenState extends ConsumerState<FaceEnrollScreen> {
   bool _closing = false;
 
   Map<String, dynamic> get _t => I18N[ref.read(localeProvider)]!;
+  bool _busyTaken = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       ref.read(kioskBusyProvider.notifier).state++; // idle-reset urmasin
+      _busyTaken = true;
       _start();
     });
   }
 
   @override
   void dispose() {
-    try {
-      ref.read(kioskBusyProvider.notifier).state--;
-    } catch (_) {}
+    if (_busyTaken) {
+      try {
+        ref.read(kioskBusyProvider.notifier).update((n) => n > 0 ? n - 1 : 0);
+      } catch (_) {}
+    }
     _cam?.dispose();
     _rec.dispose();
     _nameCtrl.dispose();
