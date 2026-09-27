@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
+import 'dart:typed_data';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:record/record.dart';
@@ -12,6 +11,13 @@ import '../../core/network/api_client.dart';
 import '../../core/network/repository.dart';
 import '../../core/services/avatar_player.dart';
 import '../../router.dart';
+import 'answer_session.dart';
+import 'audio_clip_player.dart';
+import 'speech_queue.dart';
+import 'wake_word.dart';
+import 'wav_tools.dart';
+
+export 'wake_word.dart' show stripWakeWord;
 
 enum VoicePhase { off, listening, transcribing, thinking, speaking }
 
@@ -58,66 +64,69 @@ class VoiceUiState {
       );
 }
 
-/// Uyg'otuvchi so'z = "ALOMAT" (2026-07-28, user talabi — "Kadastr AI" uzun edi, STT
-/// yomon eshitib uyg'onmasdi). Variantlar: Alomat / Alomatxon / Olomat + Whisper xato-yozuvi.
-/// _stripWake да startsWith('alomat'/'olomat'/... ) ham ushlaydi (qo'shimchali shakllar).
-const _wakeSet = {
-  'alomat', 'alomad', 'alomot', 'alamat', 'alamad', 'aloma', 'alomatxon', 'alomathon', 'alomatxan',
-  'olomat', 'olomad', 'olomot', 'olomatxon', 'alamatxon', 'alomac', 'alomatga',
-  'аломат', 'аломад', 'аломот', 'аламат', 'аломатхон', 'оломат', 'оломад', 'оломатхон', 'аломатхан',
-};
+/// Bitta yozib olingan gap (ambient VAD): WAV baytlari + nutq boshi/oxiri vaqti.
+class _Utt {
+  _Utt(this.wav, this.onsetAt, this.endAt);
+  final Uint8List wav;
+  final DateTime onsetAt;
+  final DateTime endAt;
+}
 
-// Fuzzy-moslik O'CHIRILDI.
-bool _wakeFuzzy(String w) => false;
-
-/// Wake so'z boshi (startsWith) — "alomatga/alomatxon/olomatni" kabi qo'shimchali shakllar.
-bool _wakePrefix(String w) =>
-    w.startsWith('alomat') || w.startsWith('olomat') || w.startsWith('alamat') ||
-    w.startsWith('аломат') || w.startsWith('оломат') || w.startsWith('аламат');
-
-/// Single always-on voice engine: mic → VAD → /stt → wake-route → /ai/chat → TTS.
-/// Runs globally; on the AI page the wake word is optional.
+/// Yagona doimiy ovoz dvigateli: mic → VAD → /stt → wake-route → /ai/chat-stream → navbat.
+///
+/// NAVBAT/EGALIK MODELI (1.9.48): har bir faoliyat (ambient gap, savol, gapirish, qo'lda
+/// yozish, pult) `_turn` raqamini oladi. Yangi faoliyat yoki bekor qilish `_turn`ni
+/// oshiradi → eski faoliyatning barcha davomlari (chat javobi, TTS, `_busy=false`,
+/// `speaking=false`) JIM tashlanadi. Avval eski javob yangisining ovozini o'chirib
+/// qo'yardi, sahifa almashgach eski TTS chalinardi va mikrofon TTS paytida yoqilardi.
 class VoiceController extends StateNotifier<VoiceUiState> {
-  VoiceController(this.ref) : super(const VoiceUiState());
+  /// [player]/[recorder] — faqat testlar uchun (plaginsiz soxta o'ynatuvchi).
+  VoiceController(this.ref, {ClipPlayer? player, AudioRecorder? recorder})
+      : _injectedPlayer = player,
+        _injectedRec = recorder,
+        super(const VoiceUiState());
   final Ref ref;
-  final _rec = AudioRecorder();
-  final _player = AudioPlayer();
+  final ClipPlayer? _injectedPlayer;
+  final AudioRecorder? _injectedRec;
+  AudioRecorder? _recInst;
+  AudioRecorder get _rec => _recInst ??= _injectedRec ?? AudioRecorder();
+  ClipPlayer? _clipsInst;
+  ClipPlayer get _clips => _clipsInst ??= _injectedPlayer ??
+      AudioClipPlayer(onTrace: (c, ev) {
+        // haqiqiy birinchi TOVUSH vaqti (resume) — latency logi uchun
+        if (ev == 'resumed' && c.id >= -1) _firstSoundAt ??= DateTime.now();
+      });
+  DateTime? _firstSoundAt;
+
+  /// Test/diagnostika: ambient loop mikrofonni hozir kutyaptimi (false) yoki band (true).
+  bool get busy => _busy;
 
   bool _on = false;
   bool _busy = false;
   String _lang = 'uz';
   DateTime _lastRepeat = DateTime.fromMillisecondsSinceEpoch(0);
-  // KAI gapirganidan keyingi "suhbat oynasi" — shu vaqtgacha AI sahifasida
-  // ismsiz davom-savoli qabul qilinadi
+  // Yolg'iz "Alomat"dan keyingi 15s "suhbat oynasi" — AI sahifasida ismsiz davom-savol.
   DateTime _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
-  // AI gapirgandan keyin ECHO-SUKUT: mikrofon o'z ovozini (TTS tail/reverb) qayta eshitib
-  // soxta "kadastr" wake bermasin (aks holda bo'sh turганда o'zidan AI'ga kirib ketardi,
-  // zastavka chiqmasdi). Shu vaqtgacha ambient tinglash O'CHIQ.
+  // Aks-sado oynasi: shu vaqtgacha NUTQ BOSHI sanalmaydi (mikrofon baribir yozadi).
   DateTime _quietUntil = DateTime.fromMillisecondsSinceEpoch(0);
-  // EXO-FILTR (1.9.36): AI o'z aytgan gapining BO'LAGINI qayta eshitsa (uzun javobda
-  // sukut oynasi yetmaydi — jonli logда "…yordamchisi kadastr kai bolaman" acted:true
-  // bo'lgan) — savol deb QABUL QILMAYDI. Bu "sekin javob / navbat band" muammosining
-  // asosiy sababi edi: AI o'ziga o'zi javob berishga urinardi.
+  // EXO-FILTR (1.9.36): AI o'z aytgan gapining BO'LAGINI qayta eshitsa — savol EMAS.
+  // Oqimli javobda TO'LIQ aytilgan matn (filler + hamma jumlalar) shu yerga yoziladi.
   String _lastSpokenNorm = '';
+  DateTime? _spokeEndAt;
 
-  String _normTxt(String s) => s
-      .toLowerCase()
-      .replaceAll(RegExp(r"['’ʻʼ`.,!?:;()\-—]"), ' ')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
-
-  /// Eshitilgan matn AI'ning oxirgi aytgan gapining bo'lagi (aks-sado)mi?
-  bool _isEcho(String text) {
-    if (_lastSpokenNorm.isEmpty) return false;
-    final a = _normTxt(text);
-    if (a.length < 8) return false;
-    if (_lastSpokenNorm.contains(a)) return true; // bo'lak aynan aytilgan gap ichida
-    final aw = a.split(' ').where((w) => w.length > 2).toList();
-    if (aw.length < 3) return false;
-    final bw = _lastSpokenNorm.split(' ').toSet();
-    final hit = aw.where(bw.contains).length;
-    return hit / aw.length >= 0.6; // so'zlarning 60%+ mos — aks-sado
-  }
+  // ---- faoliyat egaligi ----
+  int _turn = 0;
+  AnswerSession? _session;
+  SpeechQueue? _speechQ;
+  CancelToken? _turnCancel;
+  bool _qActive = false; // savol-javob jarayonda (AI sahifa intro/greet'ni o'tkazib yuboradi)
+  DateTime? _voiceEntryAt; // ovoz bilan AI sahifaga o'tildi (intro/greet kerak emas)
+  bool _streamUnsupported = false; // server /ai/chat-stream bilmaydi (404) — sessiya davomida
+  DateTime _lastNet = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastEngaged = DateTime.fromMillisecondsSinceEpoch(0);
+  // latency (joriy ovozli savol)
+  DateTime? _turnEos;
+  int _turnSttMs = -1;
 
   bool Function()? onAiPage; // direct mode (no wake needed)
   bool Function()? canListen; // false on the appeal page (camera owns the mic)
@@ -126,51 +135,128 @@ class VoiceController extends StateNotifier<VoiceUiState> {
 
   Dio get _dio => ref.read(dioProvider);
   Future<void> _sleep(int ms) => Future.delayed(Duration(milliseconds: ms));
-  void setLang(String lang) {
-    _lang = lang;
-    if (_on) unawaited(_primeWakeAudio());
+
+  // ignore: avoid_print
+  void _log(String m) => print('[voice] $m');
+  // ignore: avoid_print
+  void _lat(String m) => print('[voice-latency] $m');
+
+  /// Savol-javob jarayonda (so'rov yuborilgan yoki javob gapirilmoqda).
+  bool get inQuestion => _qActive;
+
+  /// Foydalanuvchi bilan hozir muloqot bormi (avto-yangilanish shu payt o'rnatmaydi).
+  bool get engaged =>
+      _busy || _manual || _qActive || state.speaking || state.recording ||
+      DateTime.now().difference(_lastEngaged).inSeconds < 90;
+
+  /// AI sahifasiga OVOZ bilan o'tildi (bir martalik) — sahifa intro-video/salomni
+  /// o'ynatmaydi, eski javobni tozalamaydi (yangi savol javobi kelyapti).
+  bool consumeVoiceEntry() {
+    final at = _voiceEntryAt;
+    _voiceEntryAt = null;
+    return at != null && DateTime.now().difference(at).inSeconds < 5;
   }
 
-  // Only the fixed wake acknowledgement is cached, never a user's question.
-  final _wakeAudio = <String, List<int>>{};
-  final _wakeLoading = <String, Future<List<int>?>>{};
-  String _wakeText(String lang) => {
-    'uz': 'Labbay! Eshitaman.',
-    'ru': 'Да, слушаю!',
-    'en': 'Yes, I am listening!',
-  }[lang] ?? 'Labbay! Eshitaman.';
+  void setLang(String lang) {
+    if (lang == _lang) return;
+    _lang = lang;
+    // Til almashdi — eski tildagi javob davom etmasin (aralash tilli ovoz bo'lmasin).
+    if (state.speaking || _qActive) unawaited(stopSpeaking());
+    if (_on) unawaited(_primePhrases());
+  }
 
-  Future<List<int>?> _loadWakeAudio(String lang, String voice) {
-    final key = '$lang|$voice';
-    final cached = _wakeAudio[key];
+  // ===================== OLDINDAN KESHLANGAN IBORALAR =====================
+  // Faqat QAT'IY iboralar (wake javobi + filler) keshlanadi — foydalanuvchi savoli EMAS.
+  final _phraseAudio = <String, Uint8List>{};
+  final _phraseLoading = <String, Future<Uint8List?>>{};
+  bool _warmedPlayer = false;
+  int _fillerIdx = 0;
+
+  static String _wakeText(String lang) => const {
+        'uz': 'Labbay! Eshitaman.',
+        'ru': 'Да, слушаю!',
+        'en': 'Yes, I am listening!',
+      }[lang] ??
+      'Labbay! Eshitaman.';
+
+  static const _fillers = {
+    'uz': ['Hozir aytaman.', 'Bir soniya.'],
+    'ru': ['Секунду.', 'Сейчас скажу.'],
+    'en': ['One moment.', 'Let me check.'],
+  };
+
+  Future<Uint8List?> _loadPhrase(String lang, String voice, String text) {
+    final key = '$lang|$voice|$text';
+    final cached = _phraseAudio[key];
     if (cached != null) return Future.value(cached);
-    final pending = _wakeLoading[key];
+    final pending = _phraseLoading[key];
     if (pending != null) return pending;
     final job = () async {
       try {
         final r = await _dio.get<List<int>>('/tts/synthesize',
-          queryParameters: {'text': _wakeText(lang), 'voice': voice, 'lang': lang},
-          options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 25)));
-        final bytes = r.data;
-        if (bytes == null || bytes.length < 200) return null;
-        _wakeAudio[key] = bytes;
+            queryParameters: {'text': text, 'voice': voice, 'lang': lang},
+            options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 25)));
+        final d = r.data;
+        if (d == null || d.length < 200) return null;
+        final bytes = d is Uint8List ? d : Uint8List.fromList(d);
+        _phraseAudio[key] = bytes;
         return bytes;
-      } catch (_) { return null; }
+      } catch (_) {
+        return null;
+      }
     }();
-    _wakeLoading[key] = job;
-    job.then((_) => _wakeLoading.remove(key));
+    _phraseLoading[key] = job;
+    job.whenComplete(() => _phraseLoading.remove(key));
     return job;
   }
 
-  Future<void> _primeWakeAudio() async {
-    final lang = _lang;
-    var avatar = ref.read(avatarProvider).valueOrNull;
-    if (avatar == null) {
-      try { avatar = await ref.read(avatarProvider.future).timeout(const Duration(seconds: 2)); } catch (_) {}
-    }
-    if (!_on) return;
-    await _loadWakeAudio(lang, (avatar?.male ?? false) ? 'sardor' : 'madina');
+  String? _knownVoice() {
+    final av = ref.read(avatarProvider).valueOrNull;
+    return av == null ? null : (av.male ? 'sardor' : 'madina');
   }
+
+  Future<String> _voiceWait(int ms) async {
+    final v = _knownVoice();
+    if (v != null) return v;
+    try {
+      final av = await ref.read(avatarProvider.future).timeout(Duration(milliseconds: ms));
+      return av.male ? 'sardor' : 'madina';
+    } catch (_) {
+      return 'madina';
+    }
+  }
+
+  Future<void> _primePhrases() async {
+    final lang = _lang;
+    final voice = await _voiceWait(2000);
+    if (!_on) return;
+    final wake = await _loadPhrase(lang, voice, _wakeText(lang));
+    final clips = _clips;
+    if (wake != null && !_warmedPlayer && clips is AudioClipPlayer) {
+      _warmedPlayer = true;
+      unawaited(clips.warmUp(wake)); // MP3 dekoderi birinchi javobdan oldin "isiydi"
+    }
+    if (Env.fillerEnabled) {
+      for (final f in _fillers[lang] ?? _fillers['uz']!) {
+        unawaited(_loadPhrase(lang, voice, f));
+      }
+    }
+  }
+
+  (String, Uint8List)? _pickFiller(String lang, String voice) {
+    final list = _fillers[lang] ?? _fillers['uz']!;
+    for (var k = 0; k < list.length; k++) {
+      final i = (_fillerIdx + k) % list.length;
+      final b = _phraseAudio['$lang|$voice|${list[i]}'];
+      if (b != null) {
+        _fillerIdx = i + 1; // navbatma-navbat almashadi
+        return (list[i], b);
+      }
+    }
+    return null;
+  }
+
+  // ===================== HAYOT SIKLI =====================
 
   Future<void> startAmbient({
     required String lang,
@@ -195,55 +281,110 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       return;
     }
     _on = true;
-    unawaited(_primeWakeAudio());
+    unawaited(AudioClipPlayer.sweepStaleTempFiles());
+    unawaited(_primePhrases());
+    _warmConnection(force: true);
     state = state.copyWith(phase: VoicePhase.listening, clearError: true);
-    _loop();
+    unawaited(_loop());
   }
 
-  /// Gapirishни (TTS + avatar video) DARHOL to'xtatadi — sahifa almashса yoki zastavka
-  /// chiqганда fonда ovoz qolmasin. Ambient tinglash o'chmaydi (faqat joriy ovoz to'xtaydi).
+  /// Joriy faoliyatni DARHOL bekor qiladi: HTTP oqimi yopiladi, navbatdagi audio
+  /// to'xtaydi, avatar-video to'xtaydi. `_turn` oshadi → eski davomlar jim tashlanadi.
+  Future<void> _cancelTurn() {
+    _turn++;
+    _qActive = false;
+    final active = _session != null || _speechQ != null || state.speaking;
+    final s = _session;
+    final q = _speechQ;
+    _session = null;
+    _speechQ = null;
+    final ct = _turnCancel;
+    _turnCancel = null;
+    if (ct != null && !ct.isCancelled) ct.cancel('turn');
+    if (!active) return Future.value();
+    final futs = <Future<void>>[
+      if (s != null) s.cancel(),
+      if (q != null) q.cancel(),
+      _clips.stop(),
+      ref.read(avatarPlayerProvider.notifier).stop(),
+    ];
+    return Future.wait(futs).then((_) {}, onError: (Object _) {});
+  }
+
+  /// Yangi faoliyatni boshlaydi (oldingisini bekor qilib) — egalik raqamini qaytaradi.
+  int _takeOver() {
+    _busy = true;
+    unawaited(_cancelTurn());
+    return _turn;
+  }
+
+  /// [t] hali ham joriy bo'lsa — mikrofonni ambient'ga qaytaradi.
+  void _release(int t, {bool spoke = true, int? quietMs}) {
+    if (t != _turn) return; // boshqa faoliyat egallagan — tegmaymiz
+    _qActive = false;
+    _turnCancel = null;
+    if (spoke) {
+      _spokeEndAt = DateTime.now();
+      _lastEngaged = _spokeEndAt!;
+      _quietUntil = DateTime.now().add(Duration(milliseconds: quietMs ?? Env.echoQuietMs));
+    }
+    if (state.speaking || state.phase == VoicePhase.thinking || state.phase == VoicePhase.transcribing ||
+        state.phase == VoicePhase.speaking) {
+      state = state.copyWith(speaking: false, phase: _on ? VoicePhase.listening : VoicePhase.off);
+    }
+    if (!_manual && !_manualStarting) _busy = false;
+  }
+
+  /// Gapirishni (TTS + avatar video + kutilayotgan AI javobi) DARHOL to'xtatadi — sahifa
+  /// almashsa yoki zastavka chiqsa fonda ovoz qolmasin. Ambient tinglash o'chmaydi.
   Future<void> stopSpeaking() async {
-    try { await _player.stop(); } catch (_) {}
-    try { await ref.read(avatarPlayerProvider.notifier).stop(); } catch (_) {}
-    _busy = false;
-    _quietUntil = DateTime.now().add(const Duration(milliseconds: 800));
-    if (state.speaking) state = state.copyWith(speaking: false);
+    final wasSpeaking = state.speaking;
+    final f = _cancelTurn();
+    if (!_manual && !_manualStarting) _busy = false;
+    if (wasSpeaking) {
+      // faqat haqiqatan gapirayotgan bo'lsa aks-sado oynasi (bo'sh navigatsiyada
+      // "Alomat" boshi kesilmasin)
+      _spokeEndAt = DateTime.now();
+      _quietUntil = DateTime.now().add(const Duration(milliseconds: 600));
+    }
+    if (state.speaking || state.phase == VoicePhase.thinking || state.phase == VoicePhase.speaking) {
+      state = state.copyWith(speaking: false, phase: _on ? VoicePhase.listening : VoicePhase.off);
+    }
+    await f;
   }
 
   Future<void> stop() async {
     _on = false;
+    await _cancelTurn();
     _busy = false;
     try {
       if (await _rec.isRecording()) await _rec.stop();
     } catch (_) {}
     try {
-      await _player.stop();
+      await _clips.stop();
     } catch (_) {}
     state = state.copyWith(phase: VoicePhase.off, speaking: false);
   }
 
-  /// AI sahifasiga qayta kirilganda ESKI javob/jadval tozalanadi —
-  /// avatar to'liq ekranda salomlashadi (eski karta ustida emas).
+  /// AI sahifasiga qayta kirilganda ESKI javob/jadval tozalanadi.
   void resetConversation() {
     state = state.copyWith(answer: '', heard: '', clearTable: true, suggest: false);
   }
 
-  /// Speak a greeting / prompt (used when entering the AI page or on wake-only).
+  /// Salomlashuv (AI sahifaga kirganda).
   Future<void> greet(String text) async {
     if (_busy) return;
-    _busy = true;
-    await _speak(text, video: true); // salomlashuv — muloqat → video generatsiya
+    final t = _takeOver();
+    await _speak(text, turn: t, video: true); // salomlashuv — tayyor video bo'lsa lab-sinx
   }
 
-  /// Foydalanuvchi QO'LDA (tugma bilan) sahifa ochganда — o'sha sahifани OVOZда
-  /// tanishtiradi. (Ovozli navigatsiya JIM o'tadi; bu FAQAT manual bosishда
-  /// chaqiriladi.) Content sahifада avatar yo'q → oddiy TTS (video emas).
+  /// Foydalanuvchi QO'LDA (tugma bilan) sahifa ochganda — sahifani OVOZda tanishtiradi.
   Future<void> announcePage(String route) async {
     if (_busy) return; // allaqachon gapiryapti — bezovta qilmaymiz
     final intro = _pageIntro(route);
     if (intro == null || intro.isEmpty) return;
-    _busy = true;
-    await _speak(intro, video: false);
+    final t = _takeOver();
+    await _speak(intro, turn: t);
   }
 
   String? _pageIntro(String route) {
@@ -299,143 +440,160 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     return m[r];
   }
 
+  // ===================== AMBIENT TINGLASH =====================
+
   Future<void> _loop() async {
     while (_on) {
-      if (_busy) {
-        await _sleep(200);
-        continue;
-      }
-      if (canListen != null && !canListen!()) {
-        await _sleep(300); // appeal page — mic handed to the camera
-        continue;
-      }
-      if (state.phase != VoicePhase.listening) state = state.copyWith(phase: VoicePhase.listening);
-      final path = await _capture();
-      if (!_on) break;
-      if (path == null) continue;
-      _busy = true;
-      state = state.copyWith(phase: VoicePhase.transcribing);
-      final text = await _stt(path);
-      if (_lastSttEvent == 'sneeze') {
-        // CHUCHKIRISH aniqlandi (server YAMNet) — odob bilan "Sog' bo'ling!" deymiz
-        await _speak(_blessYou(), video: false);
-        continue;
-      }
-      if (text != null && text.isNotEmpty && _isEcho(text)) {
-        // AI o'z ovozining bo'lagini eshitdi — savol EMAS (navbatni band qilmaydi)
-        _logHeard(text, acted: false);
-        _busy = false;
-        continue;
-      }
-      // ESLATMA: avval "Assalomu alaykum" (ismsiz) eshitilса ham o'zidan salomlashardi
-      // → O'CHIRILDI (2026-08-06, user: «o'zidan o'zi gapirmasin, faqat Alomat deb
-      //  chaqirilганда javob bersin»). Salom ham endi wake-so'z talab qiladi (_handle).
-      if (text != null && text.isNotEmpty && _valid(text)) {
-        await _handle(text);
-      } else if ((onAiPage?.call() ?? false) &&
-          text != null &&
-          _stripWake(text) != null &&
-          DateTime.now().difference(_lastRepeat).inSeconds >= 20) {
-        // AI sahifasida gap CHALA/TUSHUNARSIZ — "tushunmadim" deb + XIZMAT TURLARINI
-        // TAKLIF qilamiz (user: chala gapirsa xizmat turlarini ko'rsat; tugma bilan tanlaydi).
-        // 20s cooldown: fon shovqinida har 3.6s spam bo'lmasin.
-        _lastRepeat = DateTime.now();
-        state = state.copyWith(suggest: true, answer: '', clearTable: true);
-        await _speak(_suggestPrompt(), video: false);
-      } else {
-        _busy = false;
+      int? lt; // shu iteratsiya olgan egalik (xato bo'lsa bo'shatiladi)
+      try {
+        if (_busy) {
+          await _sleep(80);
+          continue;
+        }
+        if (canListen != null && !canListen!()) {
+          await _sleep(300); // appeal/zastavka/intro — mikrofon boshqaniki
+          continue;
+        }
+        if (state.phase != VoicePhase.listening) state = state.copyWith(phase: VoicePhase.listening);
+        final utt = await _capture();
+        if (!_on) break;
+        if (utt == null || _busy || _manual || _manualStarting) continue;
+        final t = lt = _takeOver();
+        state = state.copyWith(phase: VoicePhase.transcribing);
+        final sentAt = DateTime.now();
+        final text = await _stt(utt.wav);
+        if (t != _turn) continue; // tugma/pult/sahifa egalladi — natija eskirdi
+        _turnEos = utt.endAt;
+        _turnSttMs = DateTime.now().difference(sentAt).inMilliseconds;
+        _lat('vad_end→stt_sent_ms=${sentAt.difference(utt.endAt).inMilliseconds} stt_ms=$_turnSttMs '
+            'utt_ms=${utt.endAt.difference(utt.onsetAt).inMilliseconds} bytes=${utt.wav.length}');
+        if (_lastSttEvent == 'sneeze') {
+          // CHUCHKIRISH aniqlandi (server YAMNet) — odob bilan "Sog' bo'ling!"
+          await _speak(_blessYou(), turn: t);
+          continue;
+        }
+        if (text != null && text.isNotEmpty && _isEcho(text, utt.onsetAt)) {
+          // AI o'z ovozining bo'lagini eshitdi — savol EMAS
+          _logHeard(text, acted: false);
+          _release(t, spoke: false);
+          continue;
+        }
+        if (text != null && text.isNotEmpty && _valid(text)) {
+          await _handle(text, t);
+        } else if ((onAiPage?.call() ?? false) &&
+            text != null &&
+            stripWakeWord(text) != null &&
+            DateTime.now().difference(_lastRepeat).inSeconds >= 20) {
+          // AI sahifasida gap CHALA/TUSHUNARSIZ — "tushunmadim" + XIZMAT TURLARINI taklif.
+          _lastRepeat = DateTime.now();
+          state = state.copyWith(suggest: true, answer: '', clearTable: true);
+          await _speak(_suggestPrompt(), turn: t);
+        } else {
+          _release(t, spoke: false);
+        }
+      } catch (e) {
+        // Loop HECH QACHON o'lmasin (avval istisno bo'lsa mikrofon abadiy o'chib qolardi).
+        _log('loop error: $e');
+        if (lt != null) _release(lt, spoke: false);
+        await _sleep(500);
       }
     }
   }
 
-  // Ambient tinglash — DINAMIK OYNA (gap tugashini kutadi, avval qat'iy 3.6s edi →
-  // "Marhamat tumani statistikasi" kabi uzun savollarni KESIB/BO'LIB yuborardi).
+  // Ambient tinglash — DINAMIK OYNA (gap tugashini kutadi).
   // Windows: getAmplitude bilan onset→sukut endpointing (to'liq gapni yozadi).
-  // Linux: getAmplitude o'lik (-160) → ESKI qat'iy oynaga qaytadi (biroz uzunroq).
-  static const int _winMs = 5000;             // Linux fallback qat'iy oyna
-  static const int _pollMs = 120;             // amplituda tekshiruv qadami
-  static const int _preOnsetMaxMs = 4200;     // gap boshlanishini kutish (ambient tez javob bersin)
-  static const int _maxUttMs = 11000;         // eng uzun gap (uzun savol ham sig'sin)
-  static const double _rmsMinDbfs = -48.0;    // muvozanat: user ovozi yutilmasin, uzoq shovqin ham kirmasin
-  Future<String?> _capture() async {
-    // ECHO-SUKUT: AI endigina gapirgan bo'lsa, o'z ovozini (tail/reverb) eshitmaslik uchun
-    // qisqa muddat tinglamaymiz (soxta wake -> o'zidan AI'ga kirish oldini oladi).
-    if (DateTime.now().isBefore(_quietUntil)) { await _sleep(250); return null; }
-    final path = '${Directory.systemTemp.path}/kadastr_utt.wav';
+  // Linux: getAmplitude o'lik (-160) → ESKI qat'iy oynaga qaytadi.
+  static const int _winMs = 5000; // Linux fallback qat'iy oyna
+  static const int _pollMs = 120; // amplituda tekshiruv qadami
+  // Gap boshlanishini kutish. Avval 4200 edi → har 4.2s yozuvchi qayta ishga tushirilib
+  // ~0.1-0.3s "kar" bo'shliq qolardi (so'z boshi yo'qolardi). Boshidagi sukut endi
+  // kesib tashlanadi, shuning uchun uzun oyna yuklashni sekinlashtirmaydi.
+  static const int _preOnsetMaxMs = 8000;
+  static const int _preRollMs = 500; // nutq boshidan oldin saqlanadigan qism
+  static const int _maxUttMs = 11000; // eng uzun gap
+  static const double _rmsMinDbfs = -48.0; // muvozanat: user ovozi yutilmasin, uzoq shovqin ham kirmasin
+
+  Future<_Utt?> _capture() async {
+    final path = '${Directory.systemTemp.path}${Platform.pathSeparator}kadastr_utt.wav';
     try {
-      await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1, autoGain: true, noiseSuppress: true, echoCancel: true), path: path);
+      await _rec.start(
+          const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: 16000,
+              numChannels: 1,
+              autoGain: true,
+              noiseSuppress: true,
+              echoCancel: true),
+          path: path);
     } catch (_) {
       await _sleep(600);
       return null;
     }
-    var waited = 0, spoken = 0, silence = 0;
+    final sw = Stopwatch()..start();
+    final startedAt = DateTime.now();
+    var spoken = 0, silence = 0;
     var ampAlive = false, onset = false;
+    var onsetMs = 0;
+    DateTime? onsetAt;
     while (_on && !_busy) {
       await _sleep(_pollMs);
-      waited += _pollMs;
-      if (_manual) return null; // tap-to-talk boshlandi → mikrofon unga tegishli
+      if (_manual || _manualStarting) return null; // tap-to-talk → mikrofon unga tegishli
+      if (canListen != null && !canListen!()) break; // /appeal, zastavka, intro → mikrofonni bo'shatamiz
       double db = -160;
-      try { db = (await _rec.getAmplitude()).current; } catch (_) {}
+      try {
+        db = (await _rec.getAmplitude()).current;
+      } catch (_) {}
       if (db > -120) ampAlive = true; // Linux -160 qaytaradi → o'lik deb bilamiz
-
+      final el = sw.elapsedMilliseconds;
       if (!ampAlive) {
-        // Amplituda yo'q (Linux) → eski qat'iy oyna xulqi
-        if (waited >= _winMs) break;
+        if (el >= _winMs) break; // Amplituda yo'q (Linux) → eski qat'iy oyna
         continue;
       }
       if (!onset) {
-        if (db > Env.onsetDb) { onset = true; spoken = 0; silence = 0; }   // gap boshlandi
-        else if (waited >= _preOnsetMaxMs) { break; }                      // gap yo'q → sukut
+        // Aks-sado oynasida (AI endigina gapirdi) nutq boshi SANALMAYDI — lekin yozuv
+        // davom etadi, shuning uchun oyna tugashi bilan foydalanuvchi gapi yo'qolmaydi.
+        final quiet = DateTime.now().isBefore(_quietUntil);
+        if (!quiet && db > Env.onsetDb) {
+          onset = true;
+          onsetMs = el - _pollMs < 0 ? 0 : el - _pollMs;
+          onsetAt = DateTime.now();
+          spoken = 0;
+          silence = 0;
+          _warmConnection(); // gapirayotganda TLS ulanish tayyorlanadi → /stt darhol ketadi
+        } else if (el >= _preOnsetMaxMs) {
+          break; // gap yo'q → sukut
+        }
       } else {
         spoken += _pollMs;
         if (db < Env.stopDb) {
           silence += _pollMs;
-          if (silence >= Env.endSilenceMs) break;                          // gap tugadi (sukut cho'zildi)
+          if (silence >= Env.endSilenceMs) break; // gap tugadi
         } else {
-          silence = 0;                                                     // yana gapiryapti
+          silence = 0;
         }
-        if (spoken >= _maxUttMs) break;                                    // xavfsizlik cheki
+        if (spoken >= _maxUttMs) break;
       }
     }
-    // Tap-to-talk boshlangan bo'lsa mikrofon ENDI unga tegishli — to'xtatib qo'ymaymiz
-    if (_manual) return null;
+    if (_manual || _manualStarting) return null;
     await _stopRec();
+    final endAt = DateTime.now();
     if (!_on || _busy) return null;
+    if (canListen != null && !canListen!()) return null;
     try {
-      final bytes = await File(path).readAsBytes();
-      if (bytes.length < 4000) return null; // juda qisqa
-      // SUKUT/SHOVQIN-DARVOZA (2026-08-02 kuchaytirildi): autoGain sukut-shovqinni RMS
-      // darvozasidan o'tkazib yuborardi → server har 10s bo'sh STT bilan band bo'lardi.
-      // Endi: RMS + CREST (peak−rms). Nutq dinamik (crest >~9dB), kuchaytirilgan tekis
-      // shovqin yassi (crest 3-6dB) → yuborilmaydi.
-      final mtr = _wavMetrics(bytes);
-      if (mtr.$1 < _rmsMinDbfs) return null; // sukut → STTга yubormaymiz
-      if (mtr.$2 - mtr.$1 < 7.0 && mtr.$1 < -30) return null; // yassi past shovqin (nutq emas)
+      final raw = await File(path).readAsBytes();
+      if (raw.length < 4000) return null; // juda qisqa
+      // Nutqdan OLDINGI sukutni kesamiz (preRoll qoladi): yuklash kichik, STT tez, va
+      // RMS-darvoza sukut bilan "suyultirilmaydi" (avval pauzadan keyin past ovozda
+      // aytilgan qisqa "Alomat" butun 4s fayl bo'yicha o'rtachalanib RAD etilardi).
+      final wav = onset ? trimWavStart(raw, onsetMs - _preRollMs) : raw;
+      // SUKUT/SHOVQIN-DARVOZA: RMS + CREST (peak−rms). Nutq dinamik (crest >~9dB).
+      final lv = wavLevels(wav);
+      if (lv.$1 < _rmsMinDbfs) return null;
+      if (lv.$2 - lv.$1 < 7.0 && lv.$1 < -30) return null;
+      return _Utt(wav, onsetAt ?? startedAt, endAt);
     } catch (_) {
       return null;
     }
-    return path;
-  }
-
-  /// WAV (16-bit PCM mono) baytlaridan (RMS dBFS, peak dBFS) — platformaga bog'liq emas.
-  (double, double) _wavMetrics(List<int> wav) {
-    final n = wav.length;
-    if (n <= 44) return (-160, -160);
-    var sum = 0.0;
-    var cnt = 0;
-    var peak = 0;
-    for (var i = 44; i + 1 < n; i += 2) {
-      var s = wav[i] | (wav[i + 1] << 8);
-      if (s >= 32768) s -= 65536;
-      final a = s.abs();
-      if (a > peak) peak = a;
-      sum += s.toDouble() * s.toDouble();
-      cnt++;
-    }
-    if (cnt == 0) return (-160, -160);
-    final rms = sqrt(sum / cnt);
-    double db(double v) => 20 * (log(v / 32768.0 + 1e-9) / ln10);
-    return (db(rms), db(peak.toDouble()));
   }
 
   Future<void> _stopRec() async {
@@ -444,30 +602,50 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     } catch (_) {}
   }
 
-  /// Oxirgi /stt javobidagi hodisa (masalan 'sneeze' — chuchkirish). _stt ni chaqirgach o'qiladi.
+  /// Gapirish boshlanishi bilan (yoki startda) API ulanishini isitadi: /stt yuklash
+  /// yangi TCP+TLS qo'l siqishini kutmaydi. 20s ichida tarmoq bo'lgan bo'lsa — kerak emas.
+  void _warmConnection({bool force = false}) {
+    final now = DateTime.now();
+    if (!force && now.difference(_lastNet).inSeconds < 20) return;
+    _lastNet = now;
+    _dio
+        .get('/health', options: Options(receiveTimeout: const Duration(seconds: 5)))
+        .then((_) {}, onError: (Object _) {});
+  }
+
+  /// Oxirgi /stt javobidagi hodisa (masalan 'sneeze' — chuchkirish).
   String _lastSttEvent = '';
 
-  Future<String?> _stt(String path) async {
+  Future<String?> _stt(Uint8List bytes) async {
     _lastSttEvent = '';
     final timer = Stopwatch()..start();
     try {
-      final bytes = await File(path).readAsBytes();
       if (bytes.length < 1500) return null;
-      final r = await _dio.post(
-        '/stt',
-        queryParameters: {'lang': _lang},
-        data: Stream.fromIterable([bytes]), // BUTUN bayt bir bo'lakda (avval bayt-bayt = 350k+ mikro-hodisa, sekin)
-        options: Options(contentType: 'application/octet-stream', headers: {Headers.contentLengthHeader: bytes.length}),
-      );
-      final m = Map<String, dynamic>.from(r.data as Map);
-      if (m['error'] != null) return null;
-      _lastSttEvent = (m['event'] ?? '').toString();
-      return (m['text'] ?? '').toString().trim();
+      for (var attempt = 0;; attempt++) {
+        try {
+          final r = await _dio.post(
+            '/stt',
+            queryParameters: {'lang': _lang},
+            data: Stream.fromIterable([bytes]), // BUTUN bayt bir bo'lakda
+            options: Options(contentType: 'application/octet-stream', headers: {Headers.contentLengthHeader: bytes.length}),
+          );
+          _lastNet = DateTime.now();
+          final m = Map<String, dynamic>.from(r.data as Map);
+          if (m['error'] != null) return null;
+          _lastSttEvent = (m['event'] ?? '').toString();
+          return (m['text'] ?? '').toString().trim();
+        } on DioException catch (e) {
+          // Server yopib qo'ygan keep-alive ulanish — bir marta darhol qayta urinamiz.
+          final stale = e.type == DioExceptionType.connectionError ||
+              (e.type == DioExceptionType.unknown && (e.error is HttpException || e.error is SocketException));
+          if (attempt == 0 && stale && timer.elapsedMilliseconds < 3000) continue;
+          return null;
+        }
+      }
     } catch (_) {
       return null;
     } finally {
-      // ignore: avoid_print
-      print('[voice-latency] stt_ms=${timer.elapsedMilliseconds}');
+      _lat('stt_ms=${timer.elapsedMilliseconds}');
     }
   }
 
@@ -489,123 +667,110 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     return latin >= 2 && foreign <= latin && cyr <= latin;
   }
 
-  /// Find wake word in the first 3 tokens. null=no wake, ''=wake only, 'cmd'=wake+command.
-  String? _stripWake(String text) {
-    final low = text.toLowerCase().replaceAll(RegExp(r"['’`ʻʼ.,!?:;]"), '').trim();
-    if (low.isEmpty) return null;
-    final words = low.split(RegExp(r'\s+'));
-    var wi = -1;
-    for (var i = 0; i < min(3, words.length); i++) {
-      final w = words[i];
-      if (_wakeSet.contains(w) || _wakePrefix(w) || _wakeFuzzy(w)) {
-        wi = i;
-        break;
-      }
+  String _normTxt(String s) => s
+      .toLowerCase()
+      .replaceAll(RegExp(r"['’ʻʼ`.,!?:;()\-—]"), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  /// Eshitilgan matn AI'ning oxirgi aytgan gapining bo'lagi (aks-sado)mi?
+  /// Aks-sado FAQAT AI gapirib bo'lgach [Env.echoWindowMs] ichida boshlangan nutqda
+  /// bo'lishi mumkin (mikrofon gapirish paytida o'chiq). Keyinroq berilgan davom-savol
+  /// javob so'zlarini takrorlasa ham (masalan "Andijon tumanida auksion...") rad ETILMAYDI.
+  bool _isEcho(String text, DateTime onsetAt) {
+    final end = _spokeEndAt;
+    if (_lastSpokenNorm.isEmpty || end == null) return false;
+    if (onsetAt.difference(end).inMilliseconds > Env.echoWindowMs) return false;
+    final a = _normTxt(text);
+    if (a.length < 8) {
+      // Qisqa bo'lak (masalan "Alomat" — javobda ism tilga olingan) — butun so'z sifatida
+      // aytilgan gap ichida bo'lsa aks-sado (o'zini o'zi uyg'otmasin).
+      return a.length >= 4 && ' $_lastSpokenNorm '.contains(' $a ');
     }
-    if (wi < 0) return null;
-    // "Alomat xon" ikki so'z bo'lib eshitilsa — DAVOMI ('xon/hon/xan') ham tashlanadi.
-    var j = wi + 1;
-    const tail = {'xon', 'hon', 'xan', 'han', 'xona', 'хон', 'хан'};
-    while (j < words.length && tail.contains(words[j])) {
-      j++;
-    }
-    return words.sublist(j).join(' ').replaceAll(RegExp(r'^[\s,.:;!?"()\-—]+'), '').trim();
+    if (_lastSpokenNorm.contains(a)) return true; // bo'lak aynan aytilgan gap ichida
+    final aw = a.split(' ').where((w) => w.length > 2).toList();
+    if (aw.length < 3) return false;
+    final bw = _lastSpokenNorm.split(' ').toSet();
+    final hit = aw.where(bw.contains).length;
+    return hit / aw.length >= 0.6; // so'zlarning 60%+ mos — aks-sado
   }
 
-  Future<void> _handle(String text) async {
+  Future<void> _handle(String text, int t) async {
     state = state.copyWith(heard: text, suggest: false);
     final onAi = onAiPage?.call() ?? false;
-    // HAMMA sahifada (AI sahifasida ham) faqat ISM bilan qabul qilinadi:
-    // "Kadastr AI ..." / "KAI ..." — atrofdagi begona suhbat AI'ni ishga tushirmaydi.
-    // (2026-07-28: "ismsiz savol" sinovi QAYTARILDI — user talabi: faqat ism aytilganda
-    //  uyg'onib javob bersin; ismsiz rejimда begona gaplarga ham javob berib yuborardi.)
-    // Istisno: KAI o'zi javob berganidan keyin 15s "suhbat oynasi" — davom savoli
-    // ISMSIZ ham qabul qilinadi. Mikrofon TUGMASI esa ism talab qilmaydi.
-    final cmd = _stripWake(text);
+    // HAMMA sahifada faqat ISM ("Alomat") bilan qabul qilinadi. Istisno: yolg'iz ism
+    // aytilgandan keyingi 15s "suhbat oynasi" — davom savoli ISMSIZ ham qabul qilinadi.
+    // Mikrofon TUGMASI esa ism talab qilmaydi.
+    final cmd = stripWakeWord(text);
     String content;
     if (cmd != null) {
       content = cmd;
     } else if (onAi && DateTime.now().isBefore(_followUntil)) {
-      // FAQAT ISM BILAN (2026-08-06, user: "o'zidan o'zi gapirmasin; faqat Alomat deb
-      // chaqirilganda buyruq qabul qilsin"). AI sahifasida ham ambient nutq ism talab
-      // qiladi; YAGONA istisno — kiosk endigina javob bergan 15s "suhbat oynasi"
-      // (_followUntil) ichida davom-savoli. Mikrofon TUGMASI ism talab qilmaydi.
       content = text;
       _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
     } else {
       _logHeard(text, acted: false); // eshitildi, lekin ism yo'q — E'TIBORSIZ
-      _busy = false;
+      _release(t, spoke: false);
       return;
     }
     _logHeard(text, acted: true);
+    _lastEngaged = DateTime.now();
     ref.read(voiceActivityProvider.notifier).state++; // idle-taymerga "faollik" pulsi
-    // Name only: acknowledge from preloaded audio without navigation delay or LLM.
-    if (cmd != null && content.trim().isEmpty) {
-      if (!onAi) navToAi?.call();
-      await _speak(_labbay(), video: false);
-      _followUntil = DateTime.now().add(const Duration(seconds: 15));
+    // Faqat ism: oldindan yuklangan audio bilan DARHOL javob (LLM/navigatsiya kutilmaydi).
+    if (content.trim().length < 2) {
+      if (!onAi) {
+        state = state.copyWith(answer: '', clearTable: true);
+        _voiceEntryAt = DateTime.now();
+        navToAi?.call();
+      }
+      await _speak(_labbay(), turn: t, quietMs: Env.wakeAckQuietMs);
+      if (t == _turn) _followUntil = DateTime.now().add(const Duration(seconds: 15));
       return;
     }
     // "MENI ESLAB QOL" — yuz-ro'yxat (kamera) ekrani ochiladi (1.9.36)
     if (_enrollIntent(content)) {
       await stopSpeaking();
       navTo?.call('/face-enroll');
-      _busy = false;
       return;
     }
-    // 1) OVOZLI SAHIFA-NAVIGATSIYA — sahifaga JIM o'tadi (AI faqat AI sahifasida
-    //    gapiradi — boshqa sahifalarda ovozli izoh YO'Q).
-    //    AI sahifasida faqat aniq "och/sahifasini och" buyrug'ida o'tadi.
+    // OVOZLI SAHIFA-NAVIGATSIYA — faqat ANIQ "och/kir/bo'limi" buyrug'ida, JIM o'tadi.
     final route = _matchRoute(content);
-    // NAVIGATSIYA endi HAR sahifada ANIQ "och/kir/bo'limi" buyrug'ini talab qiladi.
-    // (Avval bosh ekranда och-buyrug'isiz sakrardi → mikrofon "kadastr raqami"/echo
-    //  eshitib O'ZIDAN O'ZI Telefonlarга o'tib ketardi. Endi faqat "telefonlarni och" da.)
     if (route != null && navTo != null && _openCmd(content)) {
       navTo!(route);
-      _busy = false;
+      _release(t, spoke: false);
       return;
     }
-    // 2) Aks holda — AI savol (LLM)
+    // AI savol. Boshqa sahifadan kelsa: eski javob tozalanadi va AI sahifaga o'tiladi —
+    // savol SHU ZAHOTI yuboriladi (avval 300 ms kutilardi; sahifa intro/greet/reset
+    // endi [consumeVoiceEntry]/[inQuestion] orqali javobga xalal bermaydi).
     if (!onAi) {
+      state = state.copyWith(answer: '', clearTable: true);
+      _voiceEntryAt = DateTime.now();
       navToAi?.call();
-      await _sleep(300);
     }
-    if (content.trim().length >= 2) {
-      await askAI(content);
-    } else {
-      // "Kadastr AI" (yolg'iz ism) — "Hoy, labbay! Eshitaman..." deb javob beramiz va
-      // KEYINGI gap 15 soniya ichida ISMSIZ qabul qilinadi (bir martalik)
-      _followUntil = DateTime.now().add(const Duration(seconds: 15));
-      await _speak(_labbay(), video: false);
-    }
+    await _answer(content, t);
   }
 
-  /// AI sahifasida sahifaga o'tish uchun ANIQ buyruq kerak: "…sahifasini och",
-  /// "…bo'limini ochib ber", "…ga o't". Oddiy savol bo'lsa — navigatsiya YO'Q.
+  /// AI sahifasida sahifaga o'tish uchun ANIQ buyruq kerak: "…sahifasini och" va h.k.
   bool _openCmd(String text) {
     final t = text.toLowerCase().replaceAll(RegExp(r"['’ʻ`]"), '');
-    // FAQAT to'liq buyruq-so'zlar (\b ikkala tomonda) — "ochiq/otkazilgan/bolimi" kabi
-    // oddiy so'zlar buyruq deb qabul qilinMAYDI (aks holda savol sahifaga uloqtirardi).
     return RegExp(r'\b(och|oching|ochib|ochsin|kir|kiring|kirgiz|otkazing)\b'
             r'|sahifani|sahifasini|bolimni|bolimini|bulimni'
             r'|откро|перейд|покажи страницу|\bopen\b|go to')
         .hasMatch(t);
   }
 
-  /// Ovozli buyruq → sahifa yo'li (fuzzy, Whisper imlosiга chidamli). null = AI savol.
+  /// Ovozli buyruq → sahifa yo'li (fuzzy, Whisper imlosiga chidamli). null = AI savol.
   String? _matchRoute(String text) {
     final t = text.toLowerCase().replaceAll(RegExp(r"['’ʻ`]"), '');
     bool has(List<String> keys) => keys.any((k) => t.contains(k));
-    // noqonuniy egallangan yerlar — aniq so'z + fuzzy undosh-skeleton (nakanuni/egellengen…).
-    // Skeletonlar SO'Z BOSHIga bog'langan (\b) — aks holda "belgilangan/olinganini" kabi
-    // oddiy so'zlar ham mos tushib, savolni /illegal sahifasiga uloqtirardi.
     if (has(['noqonun', 'qonunsiz', 'egallangan', 'egalangan', 'незаконн', 'illegal']) ||
         RegExp(r'\b[ie]?g[ae]l+[aeiou]*n[aeiou]*g[aeiou]*n').hasMatch(t) ||
         RegExp(r'\bn[aeiou]*[qkg][aeiou]*n[aeiou]*n').hasMatch(t)) {
       return '/illegal';
     }
     if (has(['hujjat', 'document', 'документ', 'spravka'])) return '/docs';
-    if (has(['telefon', 'phone', 'телефон', 'aloqa'])) return '/phones'; // 'raqam' OLINDI — "kadastr raqami" telefon EMAS
+    if (has(['telefon', 'phone', 'телефон', 'aloqa'])) return '/phones';
     if (has(['murojaat', 'appeal', 'обращ', 'жалоб', 'shikoyat', 'ariza topshir', 'murojat'])) return '/appeal';
     if (has(['qabul', 'rahbar', 'reception', 'прием', 'приём'])) return '/reception';
     if (has(['yangilik', 'news', 'novost', 'новост'])) return '/news';
@@ -622,134 +787,206 @@ class VoiceController extends StateNotifier<VoiceUiState> {
 
   // ===== TAP-TO-TALK (qo'lda gapirish) — VAD/amplitude'siz, hamma platformada =====
   bool _manual = false;
+  bool _manualStarting = false;
+  int _talkSeq = 0;
   String? _manualPath;
 
-  /// Tugmani bosib gapirish: 1-bosish boshlaydi (yozadi), 2-bosish to'xtatib AIга
-  /// yuboradi. Linux'da getAmplitude ishlamaydi → VAD o'rniga shu ishlatiladi.
+  /// Tugmani bosib gapirish: 1-bosish boshlaydi (yozadi), 2-bosish to'xtatib AIga yuboradi.
   Future<void> toggleTalk() async {
     if (_manual) {
       await _finishTalk();
       return;
     }
-    _busy = true; // ambient loop'ni pauza qiladi (mikrofon to'qnashmasin)
-    try {
-      await _player.stop();
-    } catch (_) {}
-    try {
-      await ref.read(avatarPlayerProvider.notifier).stop(); // o'ynayotgan avatar-videoni darhol to'xtat
-    } catch (_) {}
+    if (_manualStarting) return;
+    _manualStarting = true; // ambient _capture mikrofonni to'xtatib qo'ymasin
+    _takeOver(); // joriy javob/ovoz darhol to'xtaydi, ambient pauza
     try {
       if (!await _rec.hasPermission()) {
         state = state.copyWith(error: 'mic', recording: false);
+        _manualStarting = false;
         _busy = false;
         return;
       }
       if (await _rec.isRecording()) await _rec.stop();
-      final path = '${Directory.systemTemp.path}/kadastr_talk.wav';
-      await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1, autoGain: true, noiseSuppress: true, echoCancel: true), path: path);
+      final path = '${Directory.systemTemp.path}${Platform.pathSeparator}kadastr_talk.wav';
+      await _rec.start(
+          const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: 16000,
+              numChannels: 1,
+              autoGain: true,
+              noiseSuppress: true,
+              echoCancel: true),
+          path: path);
       _manualPath = path;
       _manual = true;
+      final seq = ++_talkSeq;
       state = state.copyWith(phase: VoicePhase.listening, heard: '', recording: true, clearError: true);
+      // Xavfsizlik cheki — FAQAT shu yozuv uchun (avval eski taymer keyingi yozuvni kesardi).
       Future.delayed(const Duration(seconds: 20), () {
-        if (_manual) _finishTalk();
-      }); // xavfsizlik cheki
+        if (_manual && _talkSeq == seq) _finishTalk();
+      });
     } catch (_) {
       _manual = false;
       _busy = false;
       state = state.copyWith(error: 'mic', recording: false);
+    } finally {
+      _manualStarting = false;
     }
   }
 
   Future<void> _finishTalk() async {
     if (!_manual) return;
     _manual = false;
+    _talkSeq++;
+    final t = _takeOver(); // yozuv paytida boshlangan javob bo'lsa — to'xtaydi
     state = state.copyWith(recording: false, phase: VoicePhase.transcribing);
     await _stopRec();
     final path = _manualPath;
     _manualPath = null;
-    final text = (path != null) ? await _stt(path) : null;
+    Uint8List? bytes;
+    try {
+      if (path != null) bytes = await File(path).readAsBytes();
+    } catch (_) {}
+    final text = (bytes != null) ? await _stt(bytes) : null;
+    if (t != _turn) return;
+    _turnEos = null;
     if (_lastSttEvent == 'sneeze') {
-      await _speak(_blessYou(), video: false);
+      await _speak(_blessYou(), turn: t);
       return;
     }
     if (text != null && text.trim().isNotEmpty) {
-      state = state.copyWith(heard: text.trim());
-      _logHeard(text.trim());
-      // "MENI ESLAB QOL" — tugma orqali ham ishlaydi
-      if (_enrollIntent(text.trim())) {
+      final q = text.trim();
+      state = state.copyWith(heard: q);
+      _logHeard(q);
+      _lastEngaged = DateTime.now();
+      if (_enrollIntent(q)) {
         navTo?.call('/face-enroll');
-        _busy = false;
+        _release(t, spoke: false);
         return;
       }
-      // Tugma AI sahifasida — navigatsiya FAQAT aniq "och" buyrug'ida (JIM o'tadi);
-      // aks holda AI javob beradi. Tugma orqali ISM shart emas.
-      final route = _matchRoute(text.trim());
-      if (route != null && navTo != null && _openCmd(text.trim())) {
+      // Tugma — navigatsiya FAQAT aniq "och" buyrug'ida (JIM); aks holda AI javob beradi.
+      final route = _matchRoute(q);
+      if (route != null && navTo != null && _openCmd(q)) {
         navTo!(route);
-        _busy = false;
+        _release(t, spoke: false);
       } else {
-        await askAI(text.trim());
+        await _answer(q, t);
       }
     } else {
-      // Tushunarsiz — avatar to'liq ekranda qoladi (karta chiqarilmaydi), faqat ovozda so'raydi
-      await _speak(_repeatPrompt(), video: false);
+      await _speak(_repeatPrompt(), turn: t);
     }
   }
 
+  // ===================== SAVOL → JAVOB =====================
+
+  /// Yozilgan/bosilgan savol (AI sahifa qidiruvi, xizmat qatori) — joriy javob bekor.
   Future<void> askAI(String q) async {
-    _busy = true;
-    state = state.copyWith(phase: VoicePhase.thinking, suggest: false); // taklif holatidan chiqamiz
-    String answer = '';
-    List<List<dynamic>>? table;
-    bool persona = false;
-    final chatTimer = Stopwatch()..start();
-    try {
-      final r = await _dio.post('/ai/chat', data: {'q': q, 'lang': _lang});
-      final m = Map<String, dynamic>.from(r.data as Map);
-      answer = (m['text'] ?? '').toString();
-      persona = m['persona'] == true;
-      if (m['table'] is List && (m['table'] as List).isNotEmpty) {
-        table = (m['table'] as List).map((e) => (e as List).cast<dynamic>()).toList();
-      }
-    } catch (_) {}
-    // ignore: avoid_print
-    print('[voice-latency] chat_ms=${chatTimer.elapsedMilliseconds}');
-    if (answer.trim().isEmpty) answer = _fallback();
-    if (persona) {
-      // AI o'ziga oid savol ("isming nima" ...) — ekranda FAQAT avatar qoladi (karta/jadval yo'q)
-      state = state.copyWith(answer: '', clearTable: true);
-    } else {
-      state = state.copyWith(answer: answer, table: table, clearTable: table == null);
-    }
-    // persona (muloqat) → video generatsiya; ma'lumot → karta + TTS
-    await _speak(answer, video: persona);
+    final t = _takeOver();
+    _turnEos = null;
+    await _answer(q, t);
   }
 
-  /// Telefon ovozli pultдан kelgan buyruq (QR orqali) — wake-word shart emas, to'g'ridan-to'g'ri bajaradi.
+  /// Savolni yuboradi va javobni OQIM bilan gapiradi (0-jumla kelishi bilan ovoz).
+  Future<void> _answer(String q, int t) async {
+    if (t != _turn) return;
+    _busy = true;
+    _qActive = true;
+    _lastEngaged = DateTime.now();
+    final lang = _lang;
+    final eos = _turnEos;
+    final sttMs = _turnSttMs;
+    _turnEos = null;
+    state = state.copyWith(phase: VoicePhase.thinking, suggest: false);
+    // salomlashuv videosi o'ynayotgan bo'lsa to'xtaydi (ikki ovoz bo'lmasin)
+    unawaited(ref.read(avatarPlayerProvider.notifier).stop().catchError((Object _) {}));
+    final voice = _knownVoice();
+    final ttsVoice = voice ?? 'madina';
+    final ct = _turnCancel = CancelToken();
+    _lastSpokenNorm = '';
+    final sw = Stopwatch()..start();
+    final askedAt = DateTime.now();
+    _firstSoundAt = null;
+    var firstAudioMs = -1, firstEventMs = -1;
+    var firstClipFiller = false;
+    late final AnswerSession session;
+    session = AnswerSession(
+      dio: _dio,
+      player: _clips,
+      q: q,
+      lang: lang,
+      voice: voice,
+      useStream: !_streamUnsupported,
+      onStreamUnsupported: () => _streamUnsupported = true,
+      fetchTts: (text) => _fetchClip(text, ttsVoice, lang, ct),
+      pickFiller: Env.fillerEnabled ? () => _pickFiller(lang, _knownVoice() ?? ttsVoice) : null,
+      fillerAfter: Env.fillerEnabled ? const Duration(milliseconds: Env.fillerAfterMs) : null,
+      onFirstEvent: (_) => firstEventMs = sw.elapsedMilliseconds,
+      onText: (txt, {required complete, table, persona = false}) {
+        if (t != _turn) return;
+        _lastSpokenNorm = _normTxt(session.spokenText);
+        if (complete && persona) {
+          // AI o'ziga oid savol — ekranda FAQAT avatar (karta/jadval yo'q)
+          state = state.copyWith(answer: '', clearTable: true);
+        } else if (txt.isNotEmpty) {
+          state = state.copyWith(answer: txt, table: table, clearTable: table == null);
+        }
+      },
+      onClipStart: (c) {
+        if (t != _turn) return;
+        if (firstAudioMs < 0) {
+          firstAudioMs = sw.elapsedMilliseconds;
+          firstClipFiller = c.isFiller;
+        }
+        _lastSpokenNorm = _normTxt(session.spokenText);
+        if (!state.speaking) state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
+      },
+      log: _log,
+    );
+    _session = session;
+    final res = await session.run();
+    if (identical(_session, session)) _session = null;
+    _lastNet = DateTime.now();
+    if (t != _turn || res.cancelled) return; // bekor qilindi — egasi boshqa
+    _lastSpokenNorm = _normTxt(session.spokenText);
+    final snd = _firstSoundAt;
+    final soundMs = snd == null ? -1 : snd.difference(askedAt).inMilliseconds;
+    final eosMs = (eos == null || snd == null) ? -1 : snd.difference(eos).inMilliseconds;
+    _lat('path=${res.path} first_event_ms=$firstEventMs first_clip_ms=$firstAudioMs'
+        '${firstClipFiller ? '(filler)' : ''} first_sound_ms=$soundMs total_ms=${sw.elapsedMilliseconds}'
+        '${eos != null ? ' stt_ms=$sttMs eos→first_sound_ms=$eosMs' : ''}');
+    if (res.text.trim().isEmpty && !session.queue.startedReal) {
+      final fb = _fallback();
+      state = state.copyWith(answer: fb, clearTable: true);
+      await _speak(fb, turn: t);
+      return;
+    }
+    _release(t);
+  }
+
+  /// Telefon ovozli pultdan kelgan buyruq (QR orqali) — wake-word shart emas.
   Future<void> handleRemoteText(String text) async {
     final q = text.trim();
     if (q.isEmpty) return;
-    _busy = true; // ambient mikrofonni pauza qiladi (to'qnashmasin)
-    try {
-      await _player.stop();
-    } catch (_) {}
-    try {
-      await ref.read(avatarPlayerProvider.notifier).stop(); // o'ynayotgan avatar-videoni darhol to'xtat
-    } catch (_) {}
+    final t = _takeOver(); // ambient mikrofon pauza + joriy ovoz to'xtaydi
     state = state.copyWith(heard: q, clearError: true);
     _logHeard(q);
     final route = _matchRoute(q);
     if (route != null && navTo != null) {
       navTo!(route);
-      _busy = false; // sahifaga JIM o'tadi (ovoz faqat AI sahifasida)
+      _release(t, spoke: false); // sahifaga JIM o'tadi
       return;
     }
-    navToAi?.call();
-    await _sleep(250);
+    if (!(onAiPage?.call() ?? false)) {
+      state = state.copyWith(answer: '', clearTable: true);
+      _voiceEntryAt = DateTime.now();
+      navToAi?.call();
+    }
+    _turnEos = null;
     if (q.length >= 2) {
-      await askAI(q);
+      await _answer(q, t);
     } else {
-      await _speak(_prompt(), video: false);
+      await _speak(_prompt(), turn: t);
     }
   }
 
@@ -774,14 +1011,14 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         .hasMatch(t);
   }
 
-  /// Fon yuz-tanish salomlashuvi kabi QISQA matnni ovozda aytish (video'siz, tashqi API).
+  /// QISQA matnni ovozda aytish (video'siz) — yuz-ro'yxat ekrani va h.k.
   Future<void> speakText(String text) async {
     if (_busy) return;
-    _busy = true;
-    await _speak(text, video: false);
+    final t = _takeOver();
+    await _speak(text, turn: t);
   }
 
-  /// Ism bilan chaqirilganda (savolsiz) — "Labbay, eshitaman!" deb javob beradi.
+  /// Ism bilan chaqirilganda (savolsiz) — "Labbay! Eshitaman."
   String _labbay() => _wakeText(_lang);
 
   String _repeatPrompt() => {
@@ -790,153 +1027,87 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         'en': 'Sorry, I did not understand. Please say it again.',
       }[_lang]!;
 
-  /// Chala/tushunarsiz gap — xizmat turlarini taklif qilamiz.
   String _suggestPrompt() => {
         'uz': 'Kechirasiz, to‘liq tushunmadim. Quyidagi xizmatlardan birini tanlang yoki qaytadan ayting.',
         'ru': 'Извините, не совсем понял. Выберите одну из услуг ниже или повторите.',
         'en': 'Sorry, I did not quite understand. Choose one of the services below or say it again.',
       }[_lang]!;
 
-  /// [video] = MULOQAT javobi (salom/persona/prompt) → LAB-SINXRON video generatsiya.
-  /// Ma'lumotli javoblarda `false` (avatar burchakda statik + karta, ovoz TTS).
-  Future<void> _speak(String text, {bool video = false}) async {
+  /// Tayyor matnni gapiradi (salom, sahifa e'loni, wake javobi, "tushunmadim"...).
+  /// [video] = tayyor (keshlangan) lab-sinx video bo'lsa shuni o'ynatadi.
+  /// Tugagach (yoki bekor qilinsa) [turn] bo'shatiladi.
+  Future<void> _speak(String text, {required int turn, bool video = false, int? quietMs}) async {
+    final t = turn;
     final clean = text.replaceAll(RegExp(r'<[^>]+>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (clean.isEmpty) {
-      _busy = false;
+    if (clean.isEmpty || t != _turn) {
+      _release(t, spoke: false);
       return;
     }
-    _lastSpokenNorm = _normTxt(clean); // exo-filtr: shu gapning bo'laklari savol emas
-    // POYGA-FIX: birinchi salomlashuvda avatar-konfig hali yuklanmagan bo'ladi
-    // (ikkalasi bir soniyada boshlanadi) -> null deb video o'tkazib yuborilardi.
-    // Sovuq startda sozlama ovozni uzoq ushlab turmasin; keyingi javobda tayyor bo‘ladi.
-    var avCfg = ref.read(avatarProvider).valueOrNull;
-    if (avCfg == null && clean != _labbay()) {
-      try {
-        avCfg = await ref.read(avatarProvider.future).timeout(const Duration(milliseconds: Env.avatarConfigWaitMs));
-      } catch (_) {}
-    }
-    final voice = (avCfg?.male ?? false) ? 'sardor' : 'madina';
-    // 1) JONLI AVATAR (FAQAT muloqat/persona/salomlashuv savollarida): gapirganda
-    //    LAB-SINXRON video generatsiya qilinadi (ovoz ham ichida), jim turganda oddiy
-    //    rasm. Muvaffaqiyatда oddiy TTS chalinmaydi (ikki ovoz bo'lmasin). Ma'lumotli
-    //    javobda video YO'Q — avatar burchakda, karta ko'rinadi, javob TTS'da.
+    _lastSpokenNorm = _normTxt(clean);
+    final lang = _lang;
+    // Sovuq startda avatar-konfig ovozni uzoq ushlab turmasin (≤250 ms); wake javobi kutmaydi.
+    final voice = clean == _wakeText(lang) ? (_knownVoice() ?? 'madina') : await _voiceWait(Env.avatarConfigWaitMs);
+    if (t != _turn) return;
     if (video) {
       try {
         final ap = ref.read(avatarPlayerProvider.notifier);
         state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
-        final ok = await ap.speak(avCfg, clean.substring(0, min(clean.length, 800)), _lang,
+        final ok = await ap.speak(ref.read(avatarProvider).valueOrNull, clean.substring(0, clean.length.clamp(0, 800)),
+            lang,
             voice: voice, cachedOnly: !Env.generateSpeechVideo);
+        if (t != _turn) return;
         if (ok) {
-          state = state.copyWith(speaking: false);
-          _quietUntil = DateTime.now().add(const Duration(milliseconds: 3000)); // echo-sukut
-          _busy = false;
+          _release(t, quietMs: quietMs ?? Env.echoQuietMs + 600); // video tugashi ~0.15s oldin aniqlanadi
           return;
         }
-        // video bo'lmadi — pastdagi oddiy TTS'ga tushamiz
       } catch (_) {}
     }
-    // TTS yo'liga tushdik (ma'lumotli javob YOKI video muvaffaqiyatsiz) — o'ynayotgan
-    // avatar-video qolgan bo'lsa to'xtatamiz (ovoz ustma-ust tushmasin, burchakда eski video qolmasin).
-    try {
-      await ref.read(avatarPlayerProvider.notifier).stop();
-    } catch (_) {}
-    final sp = clean.substring(0, min(clean.length, 800));
-    // ignore: avoid_print
-    print('[tts] speak boshlanyapti (${clean.length} belgi)');
-    state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
-    try {
-      await _player.stop();
-      // BOSH-JUMLA + DAVOMI (2026-08-02, tezlik): birinchi jumla QISQA → edge-tts uni ~1s da
-      // sintez qiladi va ovoz DARHOL boshlanadi; davomi u o'ynayotganda FONDA yuklanadi.
-      // (Avval butun 800-belgili matn bitta so'rovda 2-4s, ba'zan 10s+ kutilardi.)
-      // Bo'linish qoidasi server prewarm bilan AYNAN bir xil (server.js) — kesh mos tushadi.
-      String head = sp;
-      String? tail;
-      if (sp.length > 45) {
-        final mm = RegExp(r'''[.!?]["')\]]?\s''').firstMatch(sp.substring(25));
-        if (mm != null) {
-          final cut = 25 + mm.start + mm.group(0)!.length - 1;
-          final h = sp.substring(0, cut).trim(), t = sp.substring(cut).trim();
-          if (h.isNotEmpty && t.length >= 20) {
-            head = h;
-            tail = t;
-          }
-        }
-      }
-      final headFut = _fetchTts(head, voice); // birinchi ovoz so‘rovi avval yuboriladi
-      final tailFut = (tail != null) ? _fetchTts(tail, voice) : null;
-      await _playTts(await headFut, head, voice);
-      if (tailFut != null && state.speaking) {
-        // stopSpeaking bo'lgan bo'lsa (sahifa almashdi) davomini o'ynatmaymiz
-        await _playTts(await tailFut, tail!, voice);
-      }
-    } catch (e) {
-      // Ovoz chalinmasa sababи konsolда ko'rinsin (jim yutilib ketmasin)
-      // ignore: avoid_print
-      print('[tts] play xato: $e');
-    }
-    state = state.copyWith(speaking: false);
-    _quietUntil = DateTime.now().add(const Duration(milliseconds: 3000)); // echo-sukut (o'z ovozini eshitmasin)
-    _busy = false;
+    if (t != _turn) return;
+    unawaited(ref.read(avatarPlayerProvider.notifier).stop().catchError((Object _) {}));
+    final sp = clean.length > 800 ? clean.substring(0, 800) : clean;
+    final (head, tail) = splitHeadTail(sp);
+    final ct = _turnCancel = CancelToken();
+    final q = SpeechQueue(_clips, log: _log, onClipStart: (c) {
+      if (t == _turn && !state.speaking) state = state.copyWith(phase: VoicePhase.speaking, speaking: true);
+    });
+    _speechQ = q;
+    q.add(0, head, _fetchClip(head, voice, lang, ct));
+    if (tail != null) q.add(1, tail, _fetchClip(tail, voice, lang, ct));
+    q.close();
+    await q.done;
+    if (identical(_speechQ, q)) _speechQ = null;
+    _release(t, quietMs: quietMs);
   }
 
-  /// TTS mp3 ni dio (keep-alive) bilan yuklab lokal faylga yozadi — UrlSource'ning har
-  /// safar YANGI TLS ulanishi (+0.7s) yo'qoladi. Xato bo'lsa null (UrlSource fallback).
-  Future<String?> _fetchTts(String text, String voice) async {
+  /// Jumla audiosi: oldindan keshlangan ibora bo'lsa tarmoqsiz, aks holda
+  /// /tts/synthesize (dio keep-alive). Xato/bekor → null (bo'lak o'tkaziladi).
+  Future<Uint8List?> _fetchClip(String text, String voice, String lang, CancelToken? ct) async {
+    final cached = _phraseAudio['$lang|$voice|$text'];
+    if (cached != null) return cached;
+    if (text == _wakeText(lang)) return _loadPhrase(lang, voice, text);
     final timer = Stopwatch()..start();
     try {
-      final List<int> data;
-      if (text == _labbay()) {
-        final ready = await _loadWakeAudio(_lang, voice);
-        if (ready == null) return null;
-        data = ready;
-      } else {
-        final r = await _dio.get('/tts/synthesize',
-          queryParameters: {'text': text, 'voice': voice, 'lang': _lang},
+      final r = await _dio.get<List<int>>('/tts/synthesize',
+          queryParameters: {'text': text, 'voice': voice, 'lang': lang},
+          cancelToken: ct,
           options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 25)));
-        data = r.data as List<int>;
-      }
-      if (data.length < 200) return null;
-      final f = File('${Directory.systemTemp.path}/kadastr_tts_${DateTime.now().microsecondsSinceEpoch}.mp3');
-      await f.writeAsBytes(data, flush: true);
-      return f.path;
+      final d = r.data;
+      if (d == null || d.length < 200) return null;
+      return d is Uint8List ? d : Uint8List.fromList(d);
     } catch (_) {
       return null;
     } finally {
-      // ignore: avoid_print
-      print('[voice-latency] tts_fetch_ms=${timer.elapsedMilliseconds} chars=${text.length}');
-    }
-  }
-
-  /// Bitta TTS bo'lakni o'ynatadi (lokal fayl, bo'lmasa URL fallback) va tugashini kutadi.
-  Future<void> _playTts(String? filePath, String text, String voice) async {
-    final capSec = 15 + (text.length ~/ 10);
-    // MUHIM: onPlayerComplete.first.timeout(onTimeout:...) ISHLATILMAYDI —
-    // audioplayers'da runtime tip-xatosi beradi va ovoz UMUMAN chalinmasdi.
-    // Future.any tip-xavfsiz: tugash hodisasi YOKI matnга mos cap-vaqt.
-    final done = _player.onPlayerComplete.first;
-    if (filePath != null) {
-      await _player.play(DeviceFileSource(filePath));
-    } else {
-      final url = '${Env.apiBase}/tts/synthesize?text=${Uri.encodeComponent(text)}&voice=$voice&lang=$_lang';
-      await _player.play(UrlSource(url));
-    }
-    await Future.any<void>([done, Future<void>.delayed(Duration(seconds: capSec))]);
-    try {
-      await _player.stop();
-    } catch (_) {} // cap'da to'xtatiladi (o'z ovozini eshitmasin)
-    if (filePath != null) {
-      try {
-        await File(filePath).delete();
-      } catch (_) {}
+      _lat('tts_fetch_ms=${timer.elapsedMilliseconds} chars=${text.length}');
     }
   }
 
   void _logHeard(String text, {bool acted = true}) {
-    // device: instansiyalarni ajratish uchun (dev-mashina vs jonli kiosk). Server acted=false
-    // (ismsiz ambient nutq) MATNini saqlamaydi — faqat uzunlik; maxfiylik (#14).
+    // device: instansiyalarni ajratish uchun. Server acted=false MATNini saqlamaydi.
     _dio.post('/ai/heard', data: {
-      'text': text, 'lang': _lang, 'acted': acted, 'device': _deviceTag,
+      'text': text,
+      'lang': _lang,
+      'acted': acted,
+      'device': _deviceTag,
     }).then((_) {}, onError: (_) {});
   }
 
@@ -949,11 +1120,27 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     }
   }();
 
+  /// Qo'lda yozishni bekor qiladi (AI sahifadan chiqilganda — yozuv javobga aylanmasin).
+  Future<void> cancelTalk() async {
+    if (!_manual) return;
+    _manual = false;
+    _talkSeq++;
+    _manualPath = null;
+    await _stopRec();
+    _turn++;
+    _busy = false;
+    state = state.copyWith(recording: false, phase: _on ? VoicePhase.listening : VoicePhase.off);
+  }
+
   @override
   void dispose() {
     _on = false;
-    _rec.dispose();
-    _player.dispose();
+    _turn++;
+    unawaited(_session?.cancel());
+    unawaited(_speechQ?.cancel());
+    if (_injectedRec == null) _recInst?.dispose();
+    final clips = _clipsInst;
+    if (clips is AudioClipPlayer) unawaited(clips.dispose());
     super.dispose();
   }
 }

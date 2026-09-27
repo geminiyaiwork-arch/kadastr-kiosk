@@ -1,7 +1,9 @@
 /// Environment + timing constants (from index.html + app.js).
 class Env {
-  static const apiBase = 'https://api.andkadastrai.uz/api/v1';
-  static const apiOrigin = 'https://api.andkadastrai.uz';
+  // --dart-define=KIOSK_API_ORIGIN=http://127.0.0.1:8787 — lokal mock-server bilan sinash uchun
+  // (tool/mock_voice_server.dart). Standart = jonli server.
+  static const apiOrigin = String.fromEnvironment('KIOSK_API_ORIGIN', defaultValue: 'https://api.andkadastrai.uz');
+  static const apiBase = '$apiOrigin/api/v1';
   static const portalOrigin = 'https://andkadastrai.uz'; // screensaver video shu yerdan
   static const kioskId = 1;
 
@@ -29,6 +31,19 @@ class Env {
   // Tez ovoz: tayyor avatar videosi ishlaydi, yangi video javobni ushlab turmaydi.
   static const generateSpeechVideo = false;
   static const avatarConfigWaitMs = 250;
+
+  // ---- Oqimli javob (/ai/chat-stream) + "filler" (1.9.48) ----
+  // Savol yuborilgach shu vaqt ichida hech qanday javob audiosi kelmasa — qisqa
+  // tayyor ibora ("Bir soniya.") aytiladi; haqiqiy javob u tugashi bilan boshlanadi.
+  static const fillerEnabled = true;
+  static const fillerAfterMs = 1100;
+  // AI gapirib bo'lgач shu vaqt ichida NUTQ BOSHI sanalmaydi (TTS dumi/reverb o'zini
+  // uyg'otmasin). Mikrofon esa DARHOL yozishni boshlaydi (yangi savol boshi yo'qolmaydi).
+  // Avval 3000 ms edi — foydalanuvchi javobdan keyin darhol gapirsa gap boshi kesilardi.
+  static const echoQuietMs = 900;
+  static const wakeAckQuietMs = 350; // "Labbay! Eshitaman." dan keyin — odam darhol gapiradi
+  // Matnli aks-sado filtri faqat nutq shu vaqt ichida boshlangan bo'lsa qo'llanadi.
+  static const echoWindowMs = 3000;
   static const utteranceMaxMs = 22000;
   static const minVoicedMs = 150;
   static const armedMs = 18000;

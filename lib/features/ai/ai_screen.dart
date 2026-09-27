@@ -15,7 +15,6 @@ import '../../core/network/api_client.dart';
 import '../../core/network/repository.dart';
 import '../../core/services/avatar_player.dart';
 import '../../core/theme/icons.dart';
-import '../../core/theme/tokens.dart';
 import '../../core/util/fmt.dart';
 import '../../router.dart';
 import 'voice_controller.dart';
@@ -57,10 +56,6 @@ const _palOrange = _Pal(Icons.location_on_rounded, Color(0xFFFFE6D2), Color(0xFF
 const _pals = [_palBlue, _palGreen, _palPurple, _palSky, _palOrange];
 
 class _AiScreenState extends ConsumerState<AiScreen> {
-  // Burchakka chiqish spin'i FAQAT OLDINGA aylansin: har chiqishda +1 tur.
-  bool _wasCorner = false;
-  int _spins = 0;
-
   // AI "yuklanmoqda" (foizli warmup) holati
   Map<String, dynamic>? _warmup;
   Timer? _warmupPoll;
@@ -76,24 +71,29 @@ class _AiScreenState extends ConsumerState<AiScreen> {
   }
 
   Future<void> _init() async {
+    final vc = ref.read(voiceProvider.notifier);
+    // OVOZ bilan kelindi ("Alomat, ..." boshqa sahifada) — savol javobi allaqachon
+    // yo'lda: intro-video/salom o'ynatilmaydi va javob tozalanmaydi (avval intro
+    // javobni to'xtatib qo'yardi, reset esa kelgan javob matnini o'chirardi).
+    final voiceEntry = vc.consumeVoiceEntry();
     Map<String, dynamic> w = const {'loading': false};
     try { w = await ref.read(aiWarmupProvider.future); } catch (_) {}
     if (!mounted) return;
     final loading = w['loading'] == true;
     ref.read(aiWarmupLoadingProvider.notifier).state = loading;
     setState(() => _warmup = w);
-    final t = I18N[ref.read(localeProvider)]!;
-    final vc = ref.read(voiceProvider.notifier);
-    vc.resetConversation(); // eski javob/jadval tozalanadi
-    // KIRISH (INTRO) VIDEOSI: admin joriy tilга yuklagan bo'lsa — o'sha video o'ynaydi
-    // (AI GAPIRMAYDI, generatsiya QILMAYDI). Video tugagach mikrofon savolni eshitadi.
-    // Yo'q bo'lsa — hozirgi salomlashuv (Wav2Lip greet).
-    final playedIntro = await _maybePlayIntro();
-    if (!mounted) return;
-    if (!playedIntro) vc.greet(t['aiGreet']);
     if (loading) {
       _warmupPoll = Timer.periodic(const Duration(seconds: 30), (_) => _refreshWarmup());
     }
+    if (voiceEntry || vc.inQuestion) return;
+    final t = I18N[ref.read(localeProvider)]!;
+    vc.resetConversation(); // eski javob/jadval tozalanadi
+    // KIRISH (INTRO) VIDEOSI: admin joriy tilga yuklagan bo'lsa — o'sha video o'ynaydi
+    // (AI GAPIRMAYDI, generatsiya QILMAYDI). Video tugagach mikrofon savolni eshitadi.
+    // Yo'q bo'lsa — salomlashuv (greet).
+    final playedIntro = await _maybePlayIntro();
+    if (!mounted || vc.inQuestion) return;
+    if (!playedIntro) vc.greet(t['aiGreet']);
   }
 
   WinVideoPlayerController? _introCtl;
@@ -112,6 +112,7 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     } catch (_) {
       return false;
     }
+    var busyTaken = false; // kioskBusy faqat haqiqatan oshirilgan bo'lsa kamaytiriladi
     try {
       // yuklab olib keshlaymiz (takror kirishда qayta yuklamaydi)
       final base = await getApplicationSupportDirectory();
@@ -133,11 +134,15 @@ class _AiScreenState extends ConsumerState<AiScreen> {
       final playFile = await f.exists() ? f : File('${f.path}.tmp');
       final c = WinVideoPlayerController.file(playFile);
       await c.initialize().timeout(const Duration(seconds: 8));
-      if (!c.value.isInitialized || !mounted) { try { await c.dispose(); } catch (_) {} return false; }
+      if (!c.value.isInitialized || !mounted || ref.read(voiceProvider.notifier).inQuestion) {
+        try { await c.dispose(); } catch (_) {}
+        return false;
+      }
       // AI ovozi/gapi bo'lmasin — intro paytida mikrofon TINGLAMAYDI (introPlaying)
       try { await ref.read(voiceProvider.notifier).stopSpeaking(); } catch (_) {}
       ref.read(introPlayingProvider.notifier).state = true;
       ref.read(kioskBusyProvider.notifier).state++; // idle-reset urmasin
+      busyTaken = true;
       await c.setVolume(1.0);
       setState(() => _introCtl = c);
       await c.play();
@@ -163,7 +168,11 @@ class _AiScreenState extends ConsumerState<AiScreen> {
       if (mounted) setState(() => _introCtl = null);
       try { await c?.dispose(); } catch (_) {}
       try { ref.read(introPlayingProvider.notifier).state = false; } catch (_) {}
-      try { ref.read(kioskBusyProvider.notifier).state--; } catch (_) {}
+      // Avval xato/erta-chiqish yo'llarida ham kamaytirilardi (oshirilmagan bo'lsa ham) →
+      // hisoblagich manfiy bo'lib, video/murojaat paytidagi "band" himoyasi yo'qolardi.
+      if (busyTaken) {
+        try { ref.read(kioskBusyProvider.notifier).update((n) => n > 0 ? n - 1 : 0); } catch (_) {}
+      }
     }
   }
 
@@ -182,9 +191,19 @@ class _AiScreenState extends ConsumerState<AiScreen> {
   @override
   void dispose() {
     _warmupPoll?.cancel();
-    ref.read(aiWarmupLoadingProvider.notifier).state = false;
+    final vc = ref.read(voiceProvider.notifier);
+    // AI sahifadan chiqildi — kutilayotgan/gapirilayotgan javob va qo'lda yozuv yangi
+    // sahifada davom etmasin (eskirgan ovoz bo'lmasin). Provider'larni daraxt
+    // yig'ilayotgan paytda o'zgartirmaslik uchun microtask'da.
+    Future.microtask(() {
+      try {
+        ref.read(aiWarmupLoadingProvider.notifier).state = false;
+        ref.read(introPlayingProvider.notifier).state = false;
+      } catch (_) {}
+      if (vc.inQuestion) vc.stopSpeaking();
+      vc.cancelTalk();
+    });
     try { _introCtl?.dispose(); } catch (_) {}
-    try { ref.read(introPlayingProvider.notifier).state = false; } catch (_) {}
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -202,31 +221,6 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     vc.stopSpeaking();
     setState(_clearSearch);
     vc.askAI(s);
-  }
-
-  /// ESKI (qora ekran) status matni — emoji bilan.
-  String _statusOld(VoiceUiState v, Map<String, dynamic> t) {
-    final lang = ref.read(localeProvider);
-    if (v.error == 'mic') return '🎤 ${t['aiMic']}';
-    if (v.recording) {
-      return {
-        'uz': '🔴 Gapiring… (to‘xtatish uchun bosing)',
-        'ru': '🔴 Говорите… (нажмите, чтобы остановить)',
-        'en': '🔴 Speak… (tap to stop)',
-      }[lang]!;
-    }
-    switch (v.phase) {
-      case VoicePhase.thinking:
-        return '⏳ ${t['aiThink']}';
-      case VoicePhase.speaking:
-        return '🔊 ${t['aiSpeaking']}';
-      case VoicePhase.transcribing:
-        return '…';
-      case VoicePhase.listening:
-        return v.heard.isEmpty ? '🎤 ${t['aiListening']}' : '🎤 «${v.heard}»';
-      case VoicePhase.off:
-        return '🎤 ${t['aiTapTalk']}';
-    }
   }
 
   /// MOCKUP (och ekran) status matni — emojisiz (yonida animatsion to'lqin bor).
@@ -266,226 +260,131 @@ class _AiScreenState extends ConsumerState<AiScreen> {
     final url = enabled ? '${Env.apiBase}/avatar/file?${avatar!.imageQuery}' : null;
     // JIM-HOLAT imo-ishora videosi tayyorlansin (Windows; bir marta yuklanadi)
     if (enabled) ref.read(avatarPlayerProvider.notifier).ensureIdle(avatar);
-    // AVATAR DOIM yuqori-o'ng DOIRADA + fon DOIM och (16:9 katta ekranда xira bo'lmasin —
-    // user talabi 2026-07-31). To'liq-ekran 9:16 avatar OLIB TASHLANDI (16:9 da cho'zilib
-    // xira bo'lardi). Kirish holatида (javob yo'q) — salomlashuv karta ko'rinadi.
-    const hasData = true;
+    // AVATAR DOIM yuqori-o'ng DOIRADA + fon DOIM och (16:9 katta ekranda xira bo'lmasin —
+    // user talabi 2026-07-31). To'liq-ekran 9:16 avatar va qora "salomlashuv" rejimi OLIB
+    // TASHLANDI (1.9.41 dan beri ishlatilmas edi — o'lik kod tozalandi, ko'rinish o'zgarmadi).
 
-    // Yangi javob kelsa qidiruv tozalanadi (eski filtr yopishib qolmasin)
+    // Yangi javob kelsa qidiruv tozalanadi (eski filtr yopishib qolmasin). Oqimli javob
+    // jumlama-jumla o'sadi — davomi kelganda qayta tozalanmaydi.
     ref.listen(voiceProvider.select((s) => s.answer), (prev, next) {
-      if (prev != next && mounted) setState(_clearSearch);
+      final growing = prev != null && prev.isNotEmpty && next.startsWith(prev);
+      if (prev != next && !growing && mounted && _q.isNotEmpty) setState(_clearSearch);
     });
 
-    return AnimatedContainer(
-      duration: _fx,
-      color: hasData ? _cBg : T.aiDark, // javobda OCH fon (HTML), aks holda qora avatar-ekran
+    return ColoredBox(
+      color: _cBg,
       child: LayoutBuilder(builder: (context, c) {
         final w = c.maxWidth, h = c.maxHeight;
         // HTML dizayn-kanvas masshtabi (scale wrapper bilan bir xil):
         final s = math.min(w / _dW, h / _dH);
         final ox = (w - _dW * s) / 2, oy = (h - _dH * s) / 2;
         // Avatar: HTML .avatar {right:41; top:104; 212x212} — halqa 9px oq padding.
-        final avRect = hasData
-            ? Rect.fromLTWH(ox + (_dW - 41 - 212) * s, oy + 104 * s, 212 * s, 212 * s)
-            : Rect.fromLTWH(0, 0, w, h);
+        final avRect = Rect.fromLTWH(ox + (_dW - 41 - 212) * s, oy + 104 * s, 212 * s, 212 * s);
         final ap = ref.watch(avatarPlayerProvider);
-        final cornerNow = hasData;
-        if (cornerNow && !_wasCorner) _spins++; // burchakka chiqishda bir tur oldinga
-        _wasCorner = cornerNow;
         return Stack(
           children: [
-            // ======= MOCKUP sahna (faqat MA'LUMOTLI JAVOBDA ko'rinadi) =======
+            // ======= MOCKUP sahna =======
             Positioned.fill(
-              child: IgnorePointer(
-                ignoring: !hasData,
-                child: AnimatedOpacity(
-                  duration: _fx,
-                  curve: _fxCurve,
-                  opacity: hasData ? 1 : 0,
-                  child: !hasData
-                      ? const SizedBox.shrink()
-                      : Center(
-                          child: FittedBox(
-                            fit: BoxFit.contain,
-                            child: SizedBox(
-                              width: _dW,
-                              height: _dH,
-                              child: _MockStage(
-                                t: t,
-                                v: v,
-                                statusText: _statusNew(v, t),
-                                searchCtrl: _searchCtrl,
-                                q: _q,
-                                onQ: (s2) => setState(() => _q = s2),
-                                onClearQ: () => setState(_clearSearch),
-                                onAsk: _ask,
-                                onBack: () => context.go('/'),
-                                onMic: () => ref.read(voiceProvider.notifier).toggleTalk(),
-                                onDots: () {
-                                  final vc = ref.read(voiceProvider.notifier);
-                                  vc.stopSpeaking();
-                                  vc.resetConversation();
-                                  setState(_clearSearch);
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
+              child: Center(
+                child: FittedBox(
+                  fit: BoxFit.contain,
+                  child: SizedBox(
+                    width: _dW,
+                    height: _dH,
+                    child: _MockStage(
+                      t: t,
+                      v: v,
+                      statusText: _statusNew(v, t),
+                      searchCtrl: _searchCtrl,
+                      q: _q,
+                      onQ: (s2) => setState(() => _q = s2),
+                      onClearQ: () => setState(_clearSearch),
+                      onAsk: _ask,
+                      onBack: () => context.go('/'),
+                      onMic: () => ref.read(voiceProvider.notifier).toggleTalk(),
+                      onDots: () {
+                        final vc = ref.read(voiceProvider.notifier);
+                        vc.stopSpeaking();
+                        vc.resetConversation();
+                        setState(_clearSearch);
+                      },
+                    ),
+                  ),
                 ),
               ),
             ),
 
-            // ======= AVATAR (bitta widget: to'liq ekran <-> HTML doira ANIMATSIYA) =======
-            AnimatedPositioned(
-              duration: _fx,
-              curve: _fxCurve,
+            // ======= AVATAR (HTML doira, yuqori-o'ng) =======
+            Positioned(
               left: avRect.left,
               top: avRect.top,
               width: avRect.width,
               height: avRect.height,
-              child: AnimatedRotation(
-                turns: _spins.toDouble(),
-                duration: _fx,
-                curve: _fxCurve,
-                child: Stack(fit: StackFit.expand, clipBehavior: Clip.none, children: [
-                  AnimatedContainer(
-                    duration: _fx,
-                    curve: _fxCurve,
-                    clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1E1E1E),
-                      borderRadius: BorderRadius.circular(hasData ? avRect.width / 2 : 0),
-                      // HTML .ring: oq halqa (padding 9) + yumshoq soya
-                      border: hasData ? Border.all(color: Colors.white, width: 9) : null,
-                      boxShadow: hasData
-                          ? [
-                              if (v.speaking)
-                                const BoxShadow(color: Color(0x59635BEB), blurRadius: 34, spreadRadius: 4)
-                              else
-                                const BoxShadow(color: Color(0x1A3C5096), blurRadius: 30, offset: Offset(0, 10)),
-                            ]
-                          : null,
-                    ),
-                    child: Builder(builder: (context) {
-                      // GAPIRGANDA: LAB-SINXRON video (Wav2Lip). JIMда: ko'z-pirpirash idle-video
-                      // (server rasmdan avto-yasagan) loop; u ham bo'lmasa STATIK rasm.
-                      final vc = ap.controller ?? ap.idleController;
-                      if (vc != null && vc.value.isInitialized) {
-                        final vs = vc.value.size;
-                        return FittedBox(
-                          fit: BoxFit.cover,
-                          clipBehavior: Clip.hardEdge,
-                          child: SizedBox(
-                            width: vs.width <= 0 ? 720 : vs.width,
-                            height: vs.height <= 0 ? 1280 : vs.height,
-                            child: WinVideoPlayer(vc),
-                          ),
-                        );
-                      }
-                      return (enabled && url != null)
-                          ? Image.network(url,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  Center(child: kIcon('ai', size: hasData ? 90 : 220, color: Colors.white)))
-                          : Center(child: kIcon('ai', size: hasData ? 90 : 220, color: Colors.white));
-                    }),
+              child: Stack(fit: StackFit.expand, clipBehavior: Clip.none, children: [
+                AnimatedContainer(
+                  duration: _fx,
+                  curve: _fxCurve,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1E1E),
+                    borderRadius: BorderRadius.circular(avRect.width / 2),
+                    // HTML .ring: oq halqa (padding 9) + yumshoq soya
+                    border: Border.all(color: Colors.white, width: 9),
+                    boxShadow: [
+                      if (v.speaking)
+                        const BoxShadow(color: Color(0x59635BEB), blurRadius: 34, spreadRadius: 4)
+                      else
+                        const BoxShadow(color: Color(0x1A3C5096), blurRadius: 30, offset: Offset(0, 10)),
+                    ],
                   ),
-                  // HTML .dot: yashil onlayn nuqta (34px + 5px oq chegara, right/bottom 14)
-                  if (hasData)
-                    Positioned(
-                      right: 14 * s,
-                      bottom: 14 * s,
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF12C56A),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 5),
+                  child: Builder(builder: (context) {
+                    // GAPIRGANDA: LAB-SINXRON video (Wav2Lip). JIMda: ko'z-pirpirash idle-video
+                    // (server rasmdan avto-yasagan) loop; u ham bo'lmasa STATIK rasm.
+                    final vc = ap.controller ?? ap.idleController;
+                    if (vc != null && vc.value.isInitialized) {
+                      final vs = vc.value.size;
+                      return FittedBox(
+                        fit: BoxFit.cover,
+                        clipBehavior: Clip.hardEdge,
+                        child: SizedBox(
+                          width: vs.width <= 0 ? 720 : vs.width,
+                          height: vs.height <= 0 ? 1280 : vs.height,
+                          child: WinVideoPlayer(vc),
                         ),
-                      ),
+                      );
+                    }
+                    return (enabled && url != null)
+                        ? Image.network(url,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Center(child: kIcon('ai', size: 90, color: Colors.white)))
+                        : Center(child: kIcon('ai', size: 90, color: Colors.white));
+                  }),
+                ),
+                // HTML .dot: yashil onlayn nuqta (34px + 5px oq chegara, right/bottom 14)
+                Positioned(
+                  right: 14 * s,
+                  bottom: 14 * s,
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF12C56A),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 5),
                     ),
-                ]),
-              ),
+                  ),
+                ),
+              ]),
             ),
-
-            // ======= ESKI QORA-EKRAN boshqaruvlari (salomlashuv/persona holati) =======
-            if (!hasData)
-              Positioned(
-                bottom: 44,
-                left: 36,
-                child: GestureDetector(
-                  onTap: () => context.go('/'),
-                  child: Container(
-                    width: 84,
-                    height: 84,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: const Color(0xEBFFFFFF),
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: const [BoxShadow(color: Color(0x38000000), offset: Offset(0, 6), blurRadius: 20)],
-                    ),
-                    child: const Text('‹', style: TextStyle(fontSize: 46, fontWeight: FontWeight.w800, color: T.navy)),
-                  ),
-                ),
-              ),
-            if (!hasData)
-              Positioned(
-                bottom: 170,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: GestureDetector(
-                    onTap: () => ref.read(voiceProvider.notifier).toggleTalk(),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      width: v.recording ? 172 : 150,
-                      height: v.recording ? 172 : 150,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: v.recording ? const Color(0xFFE5484D) : const Color(0xFF5457F5),
-                        boxShadow: [
-                          BoxShadow(
-                            color: v.recording ? const Color(0x66E5484D) : const Color(0x4D5457F5),
-                            blurRadius: 42,
-                            spreadRadius: v.recording ? 14 : 4,
-                          ),
-                        ],
-                      ),
-                      alignment: Alignment.center,
-                      child: Icon(v.recording ? Icons.stop_rounded : Icons.mic_rounded, color: Colors.white, size: 78),
-                    ),
-                  ),
-                ),
-              ),
-            if (!hasData)
-              Positioned(
-                bottom: 60,
-                left: 40,
-                right: 40,
-                child: Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 18),
-                    decoration: BoxDecoration(
-                      color: const Color(0xEBFFFFFF),
-                      borderRadius: BorderRadius.circular(44),
-                      boxShadow: const [BoxShadow(color: Color(0x2410266B), offset: Offset(0, 6), blurRadius: 22)],
-                    ),
-                    child: Text(_statusOld(v, t),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w700, color: T.navy)),
-                  ),
-                ),
-              ),
 
             // WARMUP qatlami — bilinar-bilinmas 0101 + foiz chizig'i
             if (_isWarmup)
               Positioned.fill(
-                child: IgnorePointer(child: _WarmupOverlay(progress: _warmupProgress, dark: !hasData)),
+                child: IgnorePointer(child: _WarmupOverlay(progress: _warmupProgress, dark: false)),
               ),
 
             // KIRISH (INTRO) VIDEOSI — eng UST qatlam, to'liq ekran (hamma narsani yopadi).
-            // O'ynаganда AI gapirmaydi, mikrofon tinglamaydi; tugagach yo'qoladi → savol kutadi.
+            // O'ynaganda AI gapirmaydi, mikrofon tinglamaydi; tugagach yo'qoladi → savol kutadi.
             if (_introCtl != null && _introCtl!.value.isInitialized)
               Positioned.fill(
                 child: GestureDetector(
@@ -805,7 +704,10 @@ class _MockStageState extends ConsumerState<_MockStage> with SingleTickerProvide
         height: 200,
         child: GestureDetector(
           onTap: widget.onMic,
-          child: AnimatedBuilder(
+          // RepaintBoundary: 60 fps halo faqat o'zini qayta chizadi (avval butun sahna —
+          // panel, xira soyalar, matnlar — har kadrda qayta chizilardi, bo'sh turganda ham).
+          child: RepaintBoundary(
+              child: AnimatedBuilder(
             animation: _anim,
             builder: (_, __) {
               // HTML @keyframes halo: 2.6s davr, scale .92 -> 1.06
@@ -852,7 +754,7 @@ class _MockStageState extends ConsumerState<_MockStage> with SingleTickerProvide
                 ),
               ]);
             },
-          ),
+          )),
         ),
       ),
 
@@ -891,7 +793,8 @@ class _MockStageState extends ConsumerState<_MockStage> with SingleTickerProvide
               boxShadow: const [BoxShadow(color: Color(0x173C5096), offset: Offset(0, 8), blurRadius: 26)],
             ),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              AnimatedBuilder(
+              RepaintBoundary(
+                  child: AnimatedBuilder(
                 animation: _anim,
                 builder: (_, __) {
                   // HTML @keyframes wv: 1s davr, balandlik 8 -> 24, 4 ta ustun .15s kechikish
@@ -912,7 +815,7 @@ class _MockStageState extends ConsumerState<_MockStage> with SingleTickerProvide
                     ]),
                   );
                 },
-              ),
+              )),
               const SizedBox(width: 20),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 560),
