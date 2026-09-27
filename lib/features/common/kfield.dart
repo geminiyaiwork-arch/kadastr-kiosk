@@ -56,7 +56,7 @@ class _KFieldState extends ConsumerState<KField> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (label != null) ...[
-          Text(label!, style: K.fLabel),
+          Text(label, style: K.fLabel),
           const SizedBox(height: 6),
         ],
         TextField(

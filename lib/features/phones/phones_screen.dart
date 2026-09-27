@@ -134,9 +134,9 @@ class _PhonesScreenState extends ConsumerState<PhonesScreen> {
     final e = _sel!;
     if (_sentMsg) {
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        PageHead('${e.name}', sub: 'Xabar yuborildi'),
+        PageHead(e.name, sub: 'Xabar yuborildi'),
         KCard(accent: T.green, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: const [
+          const Row(children: [
             Icon(Icons.mark_email_read_rounded, color: T.green, size: 36),
             SizedBox(width: 12),
             Text('Xabaringiz yuborildi', style: TextStyle(color: T.green, fontSize: 24, fontWeight: FontWeight.w800)),
@@ -272,7 +272,7 @@ class _EmpCard extends StatelessWidget {
               const SizedBox(height: 10),
               Container(
                 width: 44, height: 44, alignment: Alignment.center,
-                decoration: BoxDecoration(color: T.bg, shape: BoxShape.circle),
+                decoration: const BoxDecoration(color: T.bg, shape: BoxShape.circle),
                 child: const Icon(Icons.chevron_right_rounded, color: T.navy, size: 30),
               ),
             ]),

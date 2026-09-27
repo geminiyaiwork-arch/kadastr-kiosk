@@ -67,7 +67,9 @@ class _AppealScreenState extends ConsumerState<AppealScreen> {
   @override
   void dispose() {
     _setBusy(false);
-    for (final c in [_name, _surname, _patronymic, _year, _phone, _text]) c.dispose();
+    for (final c in [_name, _surname, _patronymic, _year, _phone, _text]) {
+      c.dispose();
+    }
     _cam?.dispose();
     _review?.dispose();
     super.dispose();

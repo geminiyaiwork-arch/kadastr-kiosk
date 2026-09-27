@@ -297,7 +297,7 @@ class _PropertyScreenState extends ConsumerState<PropertyScreen> {
                         border: Border.all(color: T.blue, width: 2),
                         borderRadius: BorderRadius.circular(T.rInput),
                       ),
-                      child: Icon(Icons.refresh_rounded, color: T.blue, size: 32),
+                      child: const Icon(Icons.refresh_rounded, color: T.blue, size: 32),
                     ),
                   ),
                   const SizedBox(width: 12),

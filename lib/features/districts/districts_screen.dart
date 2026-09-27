@@ -198,7 +198,11 @@ class _RegionMap extends ConsumerWidget {
     }
     final allPts = <LatLng>[];
     for (final g in geo.values) {
-      if (g.poly != null) allPts.addAll(g.poly!); else allPts.add(g.center);
+      if (g.poly != null) {
+        allPts.addAll(g.poly!);
+      } else {
+        allPts.add(g.center);
+      }
     }
     var auk = 0, ariz = 0, cities = 0;
     for (final d in list) { auk += d.auksion; ariz += d.arizalar; if (d.isCity) cities++; }

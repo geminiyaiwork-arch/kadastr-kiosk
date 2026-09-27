@@ -38,7 +38,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
   final _ring = AudioPlayer(); // ringback ("chaqirilyapti") ohang — call.wav loop
 
   void _postCand(Map<String, dynamic> cand) {
-    ref.read(dioProvider).post('/call/ice', data: {'call_id': _callId, 'side': 'k', 'candidate': cand}).catchError((_) => null);
+    ref.read(dioProvider).post('/call/ice', data: {'call_id': _callId, 'side': 'k', 'candidate': cand}).then((_) {}, onError: (Object _) {});
   }
 
   @override
@@ -132,7 +132,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
   }
 
   void _hangup() {
-    if (_callId != null) ref.read(dioProvider).post('/call/hangup', data: {'call_id': _callId}).catchError((_) => null);
+    if (_callId != null) ref.read(dioProvider).post('/call/hangup', data: {'call_id': _callId}).then((_) {}, onError: (Object _) {});
     _close();
   }
 

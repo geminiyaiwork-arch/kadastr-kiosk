@@ -2,7 +2,6 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/i18n/strings.dart';
-import '../../core/network/repository.dart';
 import '../../router.dart';
 import 'voice_controller.dart';
 

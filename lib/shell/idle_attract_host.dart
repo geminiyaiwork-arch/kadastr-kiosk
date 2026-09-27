@@ -396,12 +396,12 @@ class _ClockWidgetState extends State<_ClockWidget> {
     super.dispose();
   }
 
-  String _2(int n) => n.toString().padLeft(2, '0');
+  String _two(int n) => n.toString().padLeft(2, '0');
 
   @override
   Widget build(BuildContext context) {
-    final time = '${_2(_now.hour)}:${_2(_now.minute)}';
-    final date = '${_2(_now.day)}.${_2(_now.month)}.${_now.year}';
+    final time = '${_two(_now.hour)}:${_two(_now.minute)}';
+    final date = '${_two(_now.day)}.${_two(_now.month)}.${_now.year}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
