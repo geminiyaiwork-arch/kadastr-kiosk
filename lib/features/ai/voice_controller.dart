@@ -166,7 +166,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   bool _busy = false;
   String _lang = 'uz';
   DateTime _lastRepeat = DateTime.fromMillisecondsSinceEpoch(0);
-  // Yolg'iz "Alomat"dan keyingi 15s "suhbat oynasi" — AI sahifasida ismsiz davom-savol.
+  // Yolg'iz "Alomat"dan keyingi 6s (1.9.50, avval 15s) "suhbat oynasi" — AI sahifasida ismsiz davom-savol.
   DateTime _followUntil = DateTime.fromMillisecondsSinceEpoch(0);
   // Aks-sado oynasi: shu vaqtgacha NUTQ BOSHI sanalmaydi (mikrofon baribir yozadi).
   DateTime _quietUntil = DateTime.fromMillisecondsSinceEpoch(0);
@@ -941,7 +941,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       if (t != _turn) return false;
       if (more == null) {
         await _speak(_labbay(), turn: t, quietMs: Env.wakeAckQuietMs);
-        if (t == _turn) _followUntil = DateTime.now().add(const Duration(seconds: 15));
+        // 1.9.50: 15 s → 6 s. Jurnal (2026-09-29): "Labbay"dan keyingi 15 s ichida atrofdagilarning gapi
+        // ("bilmayman. ismim yo'q, nima uchun?") savol sifatida qabul qilinardi. Odam odatda darhol davom
+        // etadi (1.6 s grace + 6 s); undan keyin yana "Alomat" deyish kerak (user: faqat ism bilan javob bersin).
+        if (t == _turn) _followUntil = DateTime.now().add(const Duration(seconds: 6));
         return false;
       }
       _log('wake grace: continued speech accepted');
