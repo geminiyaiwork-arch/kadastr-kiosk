@@ -910,10 +910,10 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   /// true = savolga mazmunli javob berildi (zastavka qo'riqchisi uchun).
   /// Yolg'iz "Alomat"dan keyin [Env.wakeGraceMs] ichida nutq boshlansa — to'liq gapni yozib,
   /// tanib qaytaradi (ism bo'lsa olib tashlanadi); sukut/aks-sado/yaroqsiz → null.
-  Future<String?> _graceCapture(int t) async {
+  Future<String?> _graceCapture(int t, {int? preOnsetMs}) async {
     if (_manual || _manualStarting) return null;
     state = state.copyWith(phase: VoicePhase.listening);
-    final utt = await _capture(preOnsetMaxMs: Env.wakeGraceMs, ignoreBusy: true);
+    final utt = await _capture(preOnsetMaxMs: preOnsetMs ?? Env.wakeGraceMs, ignoreBusy: true);
     if (t != _turn || utt == null) return null;
     state = state.copyWith(phase: VoicePhase.transcribing);
     final text = await _stt(utt.wav);
@@ -923,7 +923,44 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     return cmd.trim().length < 2 ? null : cmd;
   }
 
-  Future<bool> _handle(String text, int t, {bool fromAttract = false}) async {
+  /// SIDECAR (openWakeWord) uyg'otdi — 1.9.53. Mikrofon-ovoz serverga bormasdan ~0.3 s da: ding + ekran,
+  /// keyin 3 s davom-oynasi (savol); davom bo'lmasa "Labbay" + 6 s ismsiz oyna. STT-yo'l parallel qoladi.
+  DateTime _lastExtWake = DateTime.fromMillisecondsSinceEpoch(0);
+  Future<void> externalWake(double score) async {
+    if (!_on || _manual || _manualStarting) return;
+    if (DateTime.now().difference(_lastExtWake).inMilliseconds < 1500) return;
+    _lastExtWake = DateTime.now();
+    _log('external wake score=$score');
+    final t = _takeOver();
+    try {
+      await _stopRec();
+      attractGuard.onWake();
+      dismissAttract?.call();
+      _wakePing();
+      final onAi = onAiPage?.call() ?? false;
+      if (!onAi) {
+        state = state.copyWith(answer: '', clearTable: true);
+        _voiceEntryAt = DateTime.now();
+        navToAi?.call();
+      }
+      _logHeard('Alomat', acted: true);
+      _lastEngaged = DateTime.now();
+      ref.read(voiceActivityProvider.notifier).state++;
+      final more = await _graceCapture(t, preOnsetMs: 3000);
+      if (t != _turn) return;
+      if (more == null) {
+        await _speak(_labbay(), turn: t, quietMs: Env.wakeAckQuietMs);
+        if (t == _turn) _followUntil = DateTime.now().add(const Duration(seconds: 6));
+        return;
+      }
+      await _handle('Alomat $more', t, fromExternal: true);
+    } catch (e) {
+      _log('external wake error: $e');
+      _release(t, spoke: false);
+    }
+  }
+
+  Future<bool> _handle(String text, int t, {bool fromAttract = false, bool fromExternal = false}) async {
     state = state.copyWith(heard: text, suggest: false);
     final onAi = onAiPage?.call() ?? false;
     // HAMMA sahifada faqat ISM ("Alomat") bilan qabul qilinadi. Istisno: yolg'iz ism
@@ -944,7 +981,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       return false;
     }
     _logHeard(text, acted: true);
-    if (cmd != null) _wakePing(); // ism aytildi — darhol ding + chaqnash
+    if (cmd != null && !fromExternal) _wakePing(); // ism aytildi — darhol ding + chaqnash (sidecar allaqachon chalgan)
     _lastEngaged = DateTime.now();
     // Zastavkadan tashqari qabul qilingan gap — haqiqiy odam bor (qo'riqchi ketma-ketligi 0).
     if (!fromAttract) attractGuard.onRealSpeech();

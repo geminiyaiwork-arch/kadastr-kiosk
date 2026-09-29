@@ -19,7 +19,7 @@ class Env {
   // App version (reported via heartbeat; keep in sync with pubspec).
   // ⚠️ MUHIM: pubspec.yaml `version:` BILAN BIRGA oshir — aks holda avto-yangilanish
   // manifestдан «yangi» ko'rib cheksiz qayta-o'rnatadi + admin/versiya-barда eski ko'rinadi.
-  static const appVersion = '1.9.52';
+  static const appVersion = '1.9.53';
 
   // Voice timing + native VAD (dBFS amplitude from `record`; tune on Windows mic)
   // 1.9.51: -38 → -42. User: "tugma bilan zo'r, ovozga uyg'onmayapti" — tugma darvozasiz yozadi; ambientda

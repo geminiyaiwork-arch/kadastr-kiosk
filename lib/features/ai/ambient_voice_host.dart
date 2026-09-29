@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/i18n/strings.dart';
 import '../../router.dart';
 import 'voice_controller.dart';
+import '../../core/services/wake_bridge.dart';
 
 /// Yagona doimiy ovoz tinglovchisini ishga tushiradi va tilini sinxron tutadi.
 ///
@@ -26,6 +27,7 @@ class AmbientVoiceHost extends ConsumerStatefulWidget {
 
 class _AmbientVoiceHostState extends ConsumerState<AmbientVoiceHost> {
   Timer? _auto;
+  WakeBridge? _bridge; // 1.9.53: openWakeWord sidecar (Windows) — ~0.3 s uyg'onish
 
   @override
   void initState() {
@@ -41,6 +43,7 @@ class _AmbientVoiceHostState extends ConsumerState<AmbientVoiceHost> {
   @override
   void dispose() {
     _auto?.cancel();
+    _bridge?.stop();
     super.dispose();
   }
 
@@ -63,6 +66,16 @@ class _AmbientVoiceHostState extends ConsumerState<AmbientVoiceHost> {
       navToAi: () => ref.read(routerProvider).go('/ai'),
       navTo: (route) => ref.read(routerProvider).go(route),
     );
+    if (_bridge == null && WakeBridge.sidecarPath() != null) {
+      final b = WakeBridge();
+      b.log = (m) => debugPrint('[wake-bridge] $m');
+      b.onWake = (score) {
+        if (!mounted) return;
+        ref.read(voiceProvider.notifier).externalWake(score);
+      };
+      _bridge = b;
+      b.start();
+    }
   }
 
   @override
