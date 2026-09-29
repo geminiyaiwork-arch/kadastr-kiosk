@@ -32,12 +32,38 @@ const _tails = {'xon', 'hon', 'xan', 'han', 'xona', 'хон', 'хан', 'jon', '
 /// Birinchi [within] (standart 3) so'zda chaqiruv so'zini topadi. null = chaqiruv yo'q,
 /// '' = faqat ism, aks holda — ismdan keyingi buyruq/savol (kichik harf, tinish belgisiz).
 /// Zastavkada `within: 1` — gap ISM BILAN BOSHLANISHI shart.
-String? stripWakeWord(String text, {int within = 3}) {
+/// [anywhere] (1.9.52): shovqinli zalda mikrofon begona suhbatni uzluksiz yozadi va "Alomat" uzun
+/// gapning O'RTASIGA tushadi — ism istalgan joydan qidiriladi (OXIRGI "Alomat"dan keyingi qism savol).
+String? stripWakeWord(String text, {int within = 3, bool anywhere = false}) {
   final low = text.toLowerCase().replaceAll(RegExp(r"""['’`ʻʼ.,!?:;«»"“”„()]"""), '').trim();
   if (low.isEmpty) return null;
   final words = low.split(RegExp(r'\s+'));
   var wi = -1;
   var span = 1;
+  if (anywhere) {
+    for (var i = words.length - 1; i >= 0; i--) {
+      final w = words[i];
+      if (isWakeToken(w)) {
+        if (w.startsWith('salomat') || w.startsWith('саломат')) {
+          final n = i + 1 < words.length ? words[i + 1] : '';
+          if (n.startsWith('bol') || n.startsWith('бўл') || n.startsWith('бул')) continue;
+        }
+        wi = i;
+        break;
+      }
+      if ((w == 'mat' || w == 'мат') && i > 0 && (words[i - 1] == 'alo' || words[i - 1] == 'ало')) {
+        wi = i - 1;
+        span = 2;
+        break;
+      }
+    }
+    if (wi < 0) return null;
+    var j = wi + span;
+    while (j < words.length && _tails.contains(words[j])) {
+      j++;
+    }
+    return words.sublist(j).join(' ').replaceAll(RegExp(r'^[\s,.:;!?"()\-—]+'), '').trim();
+  }
   for (var i = 0; i < words.length && i < within; i++) {
     final w = words[i];
     if (isWakeToken(w)) {

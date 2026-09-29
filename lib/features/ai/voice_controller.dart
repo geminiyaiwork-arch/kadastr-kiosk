@@ -684,7 +684,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   // kesib tashlanadi, shuning uchun uzun oyna yuklashni sekinlashtirmaydi.
   static const int _preOnsetMaxMs = 8000;
   static const int _preRollMs = 500; // nutq boshidan oldin saqlanadigan qism
-  static const int _maxUttMs = 11000; // eng uzun gap
+  static const int _maxUttMs = 7000; // eng uzun gap (1.9.52: 11→7 s — shovqinli zalda 11 s begona yozuv mikrofonni band qilardi)
   static const int _maxWakeUttMs = 6000; // zastavkada: "Alomat" + qisqa savol
   static const double _rmsMinDbfs = -52.0; // 1.9.51: -48 → -52 (server /stt ham -52 da kesadi) — uzoqroq "Alomat" yutilmasin
 
@@ -929,7 +929,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     // HAMMA sahifada faqat ISM ("Alomat") bilan qabul qilinadi. Istisno: yolg'iz ism
     // aytilgandan keyingi 15s "suhbat oynasi" — davom savoli ISMSIZ ham qabul qilinadi.
     // Mikrofon TUGMASI esa ism talab qilmaydi.
-    final cmd = stripWakeWord(text);
+    // 1.9.52: zastavkadan tashqarida ism gapning ISTALGAN joyida bo'lishi mumkin (shovqinli zalda
+    // begona suhbat ismdan oldin yozilib qoladi); zastavkada avvalgidek gap boshida bo'lishi shart.
+    final cmd = stripWakeWord(text, anywhere: !fromAttract);
     String content;
     if (cmd != null) {
       content = cmd;
