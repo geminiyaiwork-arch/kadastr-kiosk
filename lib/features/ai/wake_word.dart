@@ -4,13 +4,17 @@
 const wakeSet = {
   'alomat', 'alomad', 'alomot', 'alamat', 'alamad', 'aloma', 'alomatxon', 'alomathon', 'alomatxan',
   'olomat', 'olomad', 'olomot', 'olomatxon', 'alamatxon', 'alomac', 'alomatga',
+  // 1.9.51 (user): Whisper "Alomat"ni shunday ham yozadi — bular ham chaqiruv
+  'salomat', 'salomatxon', 'salomad', 'ilomat', 'ilomatxon', 'ilomad', 'elomat', 'elomatxon', 'alomatjon', 'salomatjon',
+  'саломат', 'саломатхон', 'иломат', 'иломатхон', 'эломат',
   'аломат', 'аломад', 'аломот', 'аламат', 'аломатхон', 'оломат', 'оломад', 'оломатхон', 'аломатхан',
 };
 
-final _wakeStem = RegExp(r'^(alomat|olomat|alamat|аломат|оломат|аламат)');
+final _wakeStem = RegExp(r'^(alomat|olomat|alamat|salomat|ilomat|elomat|аломат|оломат|аламат|саломат|иломат)');
 // "alomatlar/alomatlari" = oddiy ot ("belgilar/simptomlar") — chaqiruv EMAS
 // (atrofda "kasallik alomatlari" desa kiosk o'zidan uyg'onib ketmasin).
-final _plural = RegExp(r'^(alomat|olomat|alamat|аломат|оломат|аламат)(lar|лар)');
+// "salomat bo'ling" — tilak; "salomatlik" — ot: chaqiruv EMAS
+final _plural = RegExp(r'^(alomat|olomat|alamat|salomat|аломат|оломат|аламат|саломат)(lar|лар|lik|лик|lig)');
 
 /// Bitta so'z (tinish belgisiz, kichik harf) chaqiruv so'zimi?
 bool isWakeToken(String w) {
@@ -37,6 +41,11 @@ String? stripWakeWord(String text, {int within = 3}) {
   for (var i = 0; i < words.length && i < within; i++) {
     final w = words[i];
     if (isWakeToken(w)) {
+      // "salomat bo'ling" / "salomat bo'lsin" — tilak, chaqiruv EMAS (1.9.51)
+      if (w.startsWith('salomat') || w.startsWith('саломат')) {
+        final n = i + 1 < words.length ? words[i + 1] : '';
+        if (n.startsWith('bol') || n.startsWith('бўл') || n.startsWith('бул')) continue;
+      }
       wi = i;
       break;
     }

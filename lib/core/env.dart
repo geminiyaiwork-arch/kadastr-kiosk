@@ -19,10 +19,12 @@ class Env {
   // App version (reported via heartbeat; keep in sync with pubspec).
   // ⚠️ MUHIM: pubspec.yaml `version:` BILAN BIRGA oshir — aks holda avto-yangilanish
   // manifestдан «yangi» ko'rib cheksiz qayta-o'rnatadi + admin/versiya-barда eski ko'rinadi.
-  static const appVersion = '1.9.50';
+  static const appVersion = '1.9.51';
 
   // Voice timing + native VAD (dBFS amplitude from `record`; tune on Windows mic)
-  static const onsetDb = -38.0; // above this = speech onset
+  // 1.9.51: -38 → -42. User: "tugma bilan zo'r, ovozga uyg'onmayapti" — tugma darvozasiz yozadi; ambientda
+  // uzoqroq/pastroq "Alomat" onset chegarasidan o'tmasdi. (Ism baribir STT'da tekshiriladi — soxta uyg'onish yo'q.)
+  static const onsetDb = -42.0; // above this = speech onset
   static const stopDb = -48.0; // below this = silence
   static const onsetPollMs = 140;
   static const onsetTimeoutMs = 8000;

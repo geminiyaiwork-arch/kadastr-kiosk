@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:audioplayers/audioplayers.dart';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -31,6 +32,7 @@ class VoiceUiState {
   final bool speaking;
   final bool recording; // tap-to-talk: qo'lda yozilyapti
   final bool suggest; // gap chala/tushunarsiz — xizmat turlarini taklif qilamiz
+  final bool wakeFlash; // 1.9.51: "Alomat" tanildi — ekranda qisqa yashil chaqnash (ding bilan birga)
   final String? error;
   const VoiceUiState({
     this.phase = VoicePhase.off,
@@ -40,6 +42,7 @@ class VoiceUiState {
     this.speaking = false,
     this.recording = false,
     this.suggest = false,
+    this.wakeFlash = false,
     this.error,
   });
 
@@ -51,6 +54,7 @@ class VoiceUiState {
           bool? speaking,
           bool? recording,
           bool? suggest,
+          bool? wakeFlash,
           String? error,
           bool clearError = false,
           bool clearTable = false}) =>
@@ -62,6 +66,7 @@ class VoiceUiState {
         speaking: speaking ?? this.speaking,
         recording: recording ?? this.recording,
         suggest: suggest ?? this.suggest,
+        wakeFlash: wakeFlash ?? this.wakeFlash,
         error: clearError ? null : (error ?? this.error),
       );
 }
@@ -90,6 +95,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   VoiceController(this.ref,
       {ClipPlayer? player,
       AudioRecorder? recorder,
+      this.wakeSound, // 1.9.51: "ding" (ishlab chiqarishda audioplayers; testlarda null — platforma kanali yo'q)
       this.retryBackoff = const [
         Duration(seconds: 2),
         Duration(seconds: 5),
@@ -403,6 +409,18 @@ class VoiceController extends StateNotifier<VoiceUiState> {
 
   bool _wakeOnlyNow() => wakeOnlyMode?.call() ?? false;
 
+  // 1.9.51: "Alomat" tanilishi bilan DARHOL qisqa "ding" + ekranda yashil chaqnash (user: "srazi ding
+  // deb yonsin"). TTS/Labbay/javobni kutmaydi — ~0.35 s klip, ovoz chiqmasa ham jim o'tadi.
+  final Future<void> Function()? wakeSound;
+  Timer? _flashTimer;
+  void _wakePing() {
+    final ws = wakeSound;
+    if (ws != null) { try { ws().catchError((_) {}); } catch (_) {} }
+    state = state.copyWith(wakeFlash: true);
+    _flashTimer?.cancel();
+    _flashTimer = Timer(const Duration(milliseconds: 1400), () { state = state.copyWith(wakeFlash: false); });
+  }
+
   /// Hozir tinglash mumkinmi: /appeal, /face-enroll, intro — yo'q; zastavkada faqat
   /// qo'riqchi o'chirmagan bo'lsa (wake-only).
   bool _listenAllowed() {
@@ -668,7 +686,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   static const int _preRollMs = 500; // nutq boshidan oldin saqlanadigan qism
   static const int _maxUttMs = 11000; // eng uzun gap
   static const int _maxWakeUttMs = 6000; // zastavkada: "Alomat" + qisqa savol
-  static const double _rmsMinDbfs = -48.0; // muvozanat: user ovozi yutilmasin, uzoq shovqin ham kirmasin
+  static const double _rmsMinDbfs = -52.0; // 1.9.51: -48 → -52 (server /stt ham -52 da kesadi) — uzoqroq "Alomat" yutilmasin
 
   /// [preOnsetMaxMs] — nutq boshini kutish chegarasi (sukut bo'lsa null). [ignoreBusy] — navbat
   /// egallangan paytda (masalan yolg'iz "Alomat"dan keyingi davom-oynasi) ham yozadi.
@@ -735,7 +753,8 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         spoken += _pollMs;
         if (db < Env.stopDb) {
           silence += _pollMs;
-          if (silence >= Env.endSilenceMs) break; // gap tugadi
+          // 1.9.51: qisqa gap ("Alomat") 0.5 s sukutdayoq tugaydi — uyg'onish tezroq; uzun gapda 900 ms qoladi
+          if (silence >= (spoken < 1400 ? 500 : Env.endSilenceMs)) break; // gap tugadi
         } else {
           silence = 0;
         }
@@ -923,6 +942,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
       return false;
     }
     _logHeard(text, acted: true);
+    if (cmd != null) _wakePing(); // ism aytildi — darhol ding + chaqnash
     _lastEngaged = DateTime.now();
     // Zastavkadan tashqari qabul qilingan gap — haqiqiy odam bor (qo'riqchi ketma-ketligi 0).
     if (!fromAttract) attractGuard.onRealSpeech();
@@ -1379,6 +1399,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
 
   @override
   void dispose() {
+    _flashTimer?.cancel();
     _disposed = true;
     _startRetry?.cancel();
     _on = false;
@@ -1392,4 +1413,11 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   }
 }
 
-final voiceProvider = StateNotifierProvider<VoiceController, VoiceUiState>((ref) => VoiceController(ref));
+// "Alomat" tanilganda qisqa "ding" (assets/audio/ding.wav, ~0.35 s). Pleyer kech yaratiladi.
+AudioPlayer? _dingPlayer;
+Future<void> playWakeDing() async {
+  final d = _dingPlayer ??= AudioPlayer();
+  await d.stop();
+  await d.play(AssetSource('audio/ding.wav'), volume: 0.9);
+}
+final voiceProvider = StateNotifierProvider<VoiceController, VoiceUiState>((ref) => VoiceController(ref, wakeSound: playWakeDing));

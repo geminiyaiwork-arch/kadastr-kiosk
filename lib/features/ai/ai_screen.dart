@@ -337,7 +337,9 @@ class _AiScreenState extends ConsumerState<AiScreen> with KioskBusyHold {
                     // HTML .ring: oq halqa (padding 9) + yumshoq soya
                     border: Border.all(color: Colors.white, width: 9),
                     boxShadow: [
-                      if (v.speaking)
+                      if (v.wakeFlash)
+                        const BoxShadow(color: Color(0xB322C55E), blurRadius: 44, spreadRadius: 10) // "Alomat" tanildi — yashil chaqnash
+                      else if (v.speaking)
                         const BoxShadow(color: Color(0x59635BEB), blurRadius: 34, spreadRadius: 4)
                       else
                         const BoxShadow(color: Color(0x1A3C5096), blurRadius: 30, offset: Offset(0, 10)),
