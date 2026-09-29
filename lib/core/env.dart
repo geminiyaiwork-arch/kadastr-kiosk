@@ -19,7 +19,7 @@ class Env {
   // App version (reported via heartbeat; keep in sync with pubspec).
   // ⚠️ MUHIM: pubspec.yaml `version:` BILAN BIRGA oshir — aks holda avto-yangilanish
   // manifestдан «yangi» ko'rib cheksiz qayta-o'rnatadi + admin/versiya-barда eski ko'rinadi.
-  static const appVersion = '1.9.48';
+  static const appVersion = '1.9.49';
 
   // Voice timing + native VAD (dBFS amplitude from `record`; tune on Windows mic)
   static const onsetDb = -38.0; // above this = speech onset
@@ -27,7 +27,12 @@ class Env {
   static const onsetPollMs = 140;
   static const onsetTimeoutMs = 8000;
   static const endPollMs = 100;
-  static const endSilenceMs = 600; // 120 ms polling bilan 5 sukut namunasi; kioskda pauzali nutqni tekshiring
+  // 1.9.49: 600 → 900. Jurnal (2026-09-29): "Alomat, 535-sonli qarorda ... nima qilindi" o'rtadagi pauzada
+  // 2-3 bo'lakka bo'linib ketardi (ism bir bo'lakda, savol boshqasida). +0.3 s kechikish, lekin butun gap.
+  static const endSilenceMs = 900;
+  // Yolg'iz "Alomat"dan keyin "Labbay" aytishdan OLDIN davom nutqini kutish (odam ko'pincha
+  // nafas olib davom etadi: "Alomat ... andijon viloyat statistikasi haqida ayt").
+  static const wakeGraceMs = 1600;
   // Tez ovoz: tayyor avatar videosi ishlaydi, yangi video javobni ushlab turmaydi.
   static const generateSpeechVideo = false;
   static const avatarConfigWaitMs = 250;

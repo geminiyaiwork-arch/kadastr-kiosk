@@ -670,9 +670,11 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   static const int _maxWakeUttMs = 6000; // zastavkada: "Alomat" + qisqa savol
   static const double _rmsMinDbfs = -48.0; // muvozanat: user ovozi yutilmasin, uzoq shovqin ham kirmasin
 
-  Future<_Utt?> _capture() async {
+  /// [preOnsetMaxMs] — nutq boshini kutish chegarasi (sukut bo'lsa null). [ignoreBusy] — navbat
+  /// egallangan paytda (masalan yolg'iz "Alomat"dan keyingi davom-oynasi) ham yozadi.
+  Future<_Utt?> _capture({int? preOnsetMaxMs, bool ignoreBusy = false}) async {
     final path = '${Directory.systemTemp.path}${Platform.pathSeparator}kadastr_utt.wav';
-    var wakeOnly = _wakeOnlyNow();
+    var wakeOnly = !ignoreBusy && _wakeOnlyNow();
     try {
       await _rec.start(
           const RecordConfig(
@@ -700,11 +702,11 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     var onsetMs = 0;
     var hitMax = false;
     DateTime? onsetAt;
-    while (_on && !_busy) {
+    while (_on && (ignoreBusy || !_busy)) {
       await _sleep(_pollMs);
       if (_manual || _manualStarting) return null; // tap-to-talk → mikrofon unga tegishli
       if (!_listenAllowed()) break; // /appeal, face-enroll, intro, qo'riqchi → mikrofonni bo'shatamiz
-      if (!wakeOnly && _wakeOnlyNow()) wakeOnly = true; // zastavka yozuv o'rtasida ochildi
+      if (!ignoreBusy && !wakeOnly && _wakeOnlyNow()) wakeOnly = true; // zastavka yozuv o'rtasida ochildi
       double db = -160;
       try {
         db = (await _rec.getAmplitude()).current;
@@ -726,7 +728,7 @@ class VoiceController extends StateNotifier<VoiceUiState> {
           spoken = 0;
           silence = 0;
           _warmConnection(); // gapirayotganda TLS ulanish tayyorlanadi → /stt darhol ketadi
-        } else if (el >= _preOnsetMaxMs) {
+        } else if (el >= (preOnsetMaxMs ?? _preOnsetMaxMs)) {
           break; // gap yo'q → sukut
         }
       } else {
@@ -748,9 +750,9 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     if (_manual || _manualStarting) return null;
     await _stopRec();
     final endAt = DateTime.now();
-    if (!_on || _busy) return null;
+    if (!_on || (!ignoreBusy && _busy)) return null;
     if (!_listenAllowed()) return null;
-    if (_wakeOnlyNow()) wakeOnly = true;
+    if (!ignoreBusy && _wakeOnlyNow()) wakeOnly = true;
     // Zastavka: nutq boshi bo'lmasa — yuborilmaydi. 6s cheklovga yetgan (uzluksiz) gap ham
     // yuboriladi — lekin faqat birinchi 2.5s (`mode=wake`); yuklamani duty-cycle cheklaydi.
     if (wakeOnly && !onset) return null;
@@ -887,6 +889,21 @@ class VoiceController extends StateNotifier<VoiceUiState> {
   bool debugIsEcho(String text) => _isEcho(text, DateTime.now());
 
   /// true = savolga mazmunli javob berildi (zastavka qo'riqchisi uchun).
+  /// Yolg'iz "Alomat"dan keyin [Env.wakeGraceMs] ichida nutq boshlansa — to'liq gapni yozib,
+  /// tanib qaytaradi (ism bo'lsa olib tashlanadi); sukut/aks-sado/yaroqsiz → null.
+  Future<String?> _graceCapture(int t) async {
+    if (_manual || _manualStarting) return null;
+    state = state.copyWith(phase: VoicePhase.listening);
+    final utt = await _capture(preOnsetMaxMs: Env.wakeGraceMs, ignoreBusy: true);
+    if (t != _turn || utt == null) return null;
+    state = state.copyWith(phase: VoicePhase.transcribing);
+    final text = await _stt(utt.wav);
+    if (t != _turn || text == null || text.trim().isEmpty || !_valid(text)) return null;
+    if (_isEcho(text, utt.onsetAt)) return null;
+    final cmd = stripWakeWord(text) ?? text;
+    return cmd.trim().length < 2 ? null : cmd;
+  }
+
   Future<bool> _handle(String text, int t, {bool fromAttract = false}) async {
     state = state.copyWith(heard: text, suggest: false);
     final onAi = onAiPage?.call() ?? false;
@@ -917,9 +934,19 @@ class VoiceController extends StateNotifier<VoiceUiState> {
         _voiceEntryAt = DateTime.now();
         navToAi?.call();
       }
-      await _speak(_labbay(), turn: t, quietMs: Env.wakeAckQuietMs);
-      if (t == _turn) _followUntil = DateTime.now().add(const Duration(seconds: 15));
-      return false;
+      // 1.9.49: "Labbay" aytishdan OLDIN qisqa davom-oynasi — odam "Alomat" deb nafas olib savolni
+      // davom ettirsa (jurnal: "Alomat" → "haqida ayt." bo'laklari), savol "Labbay" ovozi ostida
+      // yo'qolmasin. Davom bo'lsa — u savol sifatida qayta ishlanadi; bo'lmasa — avvalgidek "Labbay".
+      final more = await _graceCapture(t);
+      if (t != _turn) return false;
+      if (more == null) {
+        await _speak(_labbay(), turn: t, quietMs: Env.wakeAckQuietMs);
+        if (t == _turn) _followUntil = DateTime.now().add(const Duration(seconds: 15));
+        return false;
+      }
+      _log('wake grace: continued speech accepted');
+      _logHeard(more, acted: true);
+      content = more;
     }
     // "MENI ESLAB QOL" — yuz-ro'yxat (kamera) ekrani ochiladi (1.9.36)
     if (_enrollIntent(content)) {
