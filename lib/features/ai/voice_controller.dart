@@ -969,6 +969,13 @@ class VoiceController extends StateNotifier<VoiceUiState> {
     // 1.9.52: zastavkadan tashqarida ism gapning ISTALGAN joyida bo'lishi mumkin (shovqinli zalda
     // begona suhbat ismdan oldin yozilib qoladi); zastavkada avvalgidek gap boshida bo'lishi shart.
     final cmd = stripWakeWord(text, anywhere: !fromAttract);
+    // Sidecar (openWakeWord) shu gapni allaqachon ushlagan bo'lsa — STT-yo'l TAKRORLAMASIN (ikki marta
+    // "Labbay"/javob bo'lmasin): tashqi uyg'onishdan keyingi 6 s ichida kelgan ismli gap e'tiborsiz.
+    if (cmd != null && !fromExternal && DateTime.now().difference(_lastExtWake).inSeconds < 6) {
+      _log('stt wake suppressed (sidecar handled)');
+      _release(t, spoke: false);
+      return false;
+    }
     String content;
     if (cmd != null) {
       content = cmd;
